@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {"major": 3, "minor": 24, "patch": 0},
+  "configurePresets": [
+    {"name": "windows", "displayName": "Windows VS2022 x64", "generator": "Visual Studio 17 2022", "architecture": "x64", "binaryDir": "${sourceDir}/build"},
+    {"name": "linux", "displayName": "Linux Release", "generator": "Ninja", "binaryDir": "${sourceDir}/build-linux", "cacheVariables": {"CMAKE_BUILD_TYPE": "Release"}}
+  ],
+  "buildPresets": [{"name": "windows-release", "configurePreset": "windows", "configuration": "Release", "jobs": 1, "nativeToolOptions": ["/nr:false"]}, {"name": "linux-release", "configurePreset": "linux"}],
+  "testPresets": [{"name": "windows-release", "configurePreset": "windows", "configuration": "Release", "output": {"outputOnFailure": true}}, {"name": "linux-release", "configurePreset": "linux", "output": {"outputOnFailure": true}}]
+}

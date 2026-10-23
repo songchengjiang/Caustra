@@ -1,0 +1,31 @@
+Caustra
+
+This project is a standalone, modified path-tracing extraction based on the
+architecture and rendering algorithms in NVIDIA vk_gltf_renderer. It is not
+an NVIDIA product. The host backend and scene API were restructured to remove
+glTF import, rasterization, editor, animation and sky dependencies. NVIDIA
+DLSS Ray Reconstruction is supported as an optional rendering-core backend.
+
+Source snapshot inspected:
+  vk_gltf_renderer: 174625d5c621c088bf3610377999f9dbdcf5c3b5
+  nvpro_core2:      7cfe3ca9dc53ab23aeb8b55787fa676f1ff6c3d0
+
+Reference implementation files:
+  src/renderer_pathtracer.cpp, src/gltf_scene_rtx.cpp
+  shaders/gltf_pathtrace.slang, shaders/pathtrace_functions.h.slang
+  shaders/raytracer_interface.h.slang, shaders/get_hit.h.slang
+  src/dlss_wrapper.cpp, shaders/dlss_util.h
+
+Unmodified NVIDIA shader dependencies are included under third_party/nvshaders.
+Their original copyright and Apache-2.0 license notices are retained in each
+file, with the upstream license reproduced in that directory. See ORIGIN.md
+there for file inventory and integrity hashes.
+
+NVIDIA vk_gltf_renderer and nvpro_core2:
+  Copyright (c) NVIDIA CORPORATION. All rights reserved.
+  Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Optional NVIDIA DLSS/NGX SDK headers, static libraries and runtime binaries
+are external dependencies governed by their own NVIDIA license terms.
+The build references the installed SDK and deploys its release runtime files;
+these dependencies are not relicensed by Caustra's Apache-2.0 license.
