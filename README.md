@@ -4,6 +4,18 @@
 
 保留 Vulkan Ray Query 硬件求交、每个网格的 BLAS、实例 TLAS、漫反射与 GGX 金属/粗糙度材质、三角形面积光、NEE、多重重要性采样、Russian Roulette、渐进累积和线性 HDR 回读；提供可选的 NVIDIA DLSS Ray Reconstruction 降噪与升采样。去掉 glTF/OBJ 加载、场景编辑器、光栅化、动画、复杂天空、AI 桥接和 OptiX/OIDN。材质第一阶段是双面不透明材质；基础颜色、金属度、粗糙度和自发光可由调用方直接提交。
 
+## 渲染效果
+
+以下图片均由本工程在 NVIDIA GeForce RTX 5060 上实际渲染，场景由代码生成。
+
+Cornell Box：960×720、2048 samples per pixel、最多 8 次散射，包含金属球、漫反射箱体和三角形面积光。此图未使用 DLSS。
+
+![Caustra 路径追踪渲染的 Cornell Box](docs/images/cornell.png)
+
+DLSS 原生分辨率对照：960×720、64 个 1 spp 时域帧、RR 预设 E。左侧为同一批样本的原始累积结果，右侧为 DLSS Ray Reconstruction 输出。
+
+![左侧为原始累积图，右侧为 DLSS Ray Reconstruction 降噪图](docs/images/dlss_comparison.png)
+
 ## 构建与运行
 
 需要 CMake 3.24+、C++20 编译器、Vulkan SDK 1.2+、支持 `VK_KHR_ray_query` 与 `VK_KHR_acceleration_structure` 的显卡和驱动，以及能够生成 SPIR-V 的 Slang 编译器。当前 Windows 环境可直接复用原项目已下载的 Slang 与 DLSS SDK；也可以用 `-DCAUSTRA_SLANG_ROOT=...`、`-DCAUSTRA_SLANGC=...` 和 `-DCAUSTRA_DLSS_ROOT=...` 指定自己的 SDK。此工程配置时不会下载依赖。
