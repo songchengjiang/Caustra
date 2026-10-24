@@ -2,7 +2,63 @@
 
 基于本机 `vk_gltf_renderer` 的路径追踪实现与其使用的 NVIDIA `nvshaders` 拆分改造。提供独立 C++20 静态库、命令行出图、Windows 实时查看 Demo 和回归测试。原始工程保持原样；新工程不链接原工程或 `nvpro_core2`，运行时不需要任何模型文件。
 
-保留 Vulkan Ray Query 硬件求交、每个网格的 BLAS、实例 TLAS、漫反射与 GGX 金属/粗糙度材质、三角形面积光、NEE、多重重要性采样、Russian Roulette、渐进累积和线性 HDR 回读；提供可选的 NVIDIA DLSS Ray Reconstruction 降噪与升采样。去掉 glTF/OBJ 加载、场景编辑器、光栅化、动画、复杂天空、AI 桥接和 OptiX/OIDN。材质第一阶段是双面不透明材质；基础颜色、金属度、粗糙度和自发光可由调用方直接提交。
+保留 Vulkan Ray Query 硬件求交、每个网格的 BLAS、实例 TLAS、三角形面积光、NEE、多重重要性采样、Russian Roulette、渐进累积和线性 HDR 回读；提供可选的 NVIDIA DLSS Ray Reconstruction 降噪与升采样。材质以 MaterialX 图为主要资产路径，支持六类原生表面模型、纹理、法线贴图、各向异性、清漆、折射透射、SSS、薄膜、fuzz、均匀参与介质与空间 SSS 网格。位移在外围工具中生成真实细分几何。Blender USD 导入与 MaterialX 编译位于独立资产工具层，核心不依赖 USD、MaterialX SDK、Python 或模型加载器。没有场景编辑器、光栅化、动画系统、复杂天空或 OptiX/OIDN。
+
+## Blender / MaterialX 资产
+
+在 Blender 的 USD 导出面板启用 **Materials → MaterialX Network**、纹理导出和网格三角化。Blender 4.5 LTS 的 Principled BSDF 会导出为 MaterialX **OpenPBR** 节点；工程提供独立的 OpenPBR 表面实现，保留材质图的逐命中求值。工程中附带由 Blender 4.5.3 实际导出的测试资产及重建脚本。
+
+资产工具需要 Python 3.11–3.14。首次配置后，编译并查看模型：
+
+```powershell
+python -m venv build/asset-tools-env
+./build/asset-tools-env/Scripts/python.exe -m pip install -r requirements-assets.txt
+./build/asset-tools-env/Scripts/python.exe tools/compile_asset.py tests/assets/blender/scene.usdc renders/blender.caustra
+cmake --preset windows
+cmake --build --preset windows-release
+./build/bin/Release/caustra_viewer.exe --asset renders/blender.caustra
+# 离线出图，同样使用资产内的相机
+./build/bin/Release/caustra_demo.exe --asset renders/blender.caustra --width 960 --height 640 --samples 128 --output renders/blender --validation --self-test
+```
+
+![Blender USD / MaterialX 在 Caustra 中的渲染结果](docs/images/blender_materialx.png)
+
+上图由随附的 Blender 资产实际渲染：960×640、1024 spp，未启用 DLSS。
+
+资产编译器读取 USD 中的 `mtlx` 网络，重建并校验 MaterialX Document，使用真实 NodeDef 默认值，将受支持的节点图编译成 GPU 材质程序；不把连接的图压成常量 PBR 参数。自包含 `.caustra` 包含几何、材质指令和线性纹理数据，编译后可脱离源 USD、图片及 Python 环境运行。`caustra::assets` 是可选的 C++ 资产包读取库；`-DCAUSTRA_BUILD_ASSETS=OFF` 可关闭。
+
+已支持多材质绑定、UV/法线插值、实例变换、Y/Z 向上与米制转换、透视相机、矩形/圆盘区域灯；材质支持基础色、金属度、粗糙度、IOR、各向异性方向、清漆及独立法线、发光和覆盖率。节点包含图像、常用算术/混合/向量运算、棋盘格与 MaterialX 标量/向量 Perlin 噪声。完整支持范围、颜色空间和纹理过滤约定见 [资产工具文档](tools/caustra_assets/README.md) 与 [架构说明](docs/architecture.md)。
+
+### 完整特性测试场景
+
+新增的 [Blender 场景及配套 MaterialX 文件](tests/assets/features/) 包含透明玻璃、吸收着色玻璃、磨砂玻璃、薄壁透射、SSS 蜡材质、OpenPBR fuzz、薄膜干涉、体积散射及程序位移网格。可编辑源文件为 `tests/assets/features/scene.blend`，重建脚本为 `tools/blender_export_features.py`。Blender 4.5 未导出的薄壁标记、体积和位移终端由可重现的 USD 附加层提供，原始 Blender 导出保持独立。
+
+```powershell
+./build/asset-tools-env/Scripts/python.exe tools/compile_asset.py tests/assets/features/scene.usda renders/features.caustra
+./build/bin/Release/caustra_viewer.exe --asset renders/features.caustra --bounces 24
+# 玻璃和多次散射需要更多路径深度
+./build/bin/Release/caustra_demo.exe --asset renders/features.caustra --width 960 --height 640 --samples 256 --bounces 24 --output renders/features --validation --self-test
+```
+
+![MaterialX 折射、SSS、fuzz、薄膜、体积和几何位移测试](docs/images/materialx_features.png)
+
+上图由该测试场景实际渲染：960×640、256 spp、24 次散射深度，未启用 DLSS。
+
+透射支持粗糙折射、全内反射、薄壁与 RGB 色散；内部使用距离相关的 Beer–Lambert 吸收。SSS 通过内部自由程采样和相函数随机游走实现。体积支持均匀吸收、散射、发光与 Henyey–Greenstein 各向异性，最多 16 层嵌套；介质边界需要闭合且朝外，体积之间应嵌套或分离。薄膜使用 MaterialX 光谱积分近似，OpenPBR fuzz 使用其 Zeltner 模型。标量/向量位移在资产编译时细分并改变顶点和法线，`--displacement-subdivisions` 控制细分等级。
+
+## MaterialX 官方示例全材质画廊
+
+基于官方 **MaterialX v1.39.5**，将 50 个示例文件中的 **62 个独立材质与 4 个 Look 复用样本，共 66 个样本**放在同一场景，包括棋盘示例的全部 15 个材质。模型、毛发薄带、展台、名称标签、灯光与相机均由程序生成，支持旋转、平移和缩放查看。
+
+```powershell
+.\build\asset-tools-env\Scripts\python.exe tools/fetch_materialx_examples.py
+.\build\asset-tools-env\Scripts\python.exe tools/build_materialx_gallery.py --source-root build/deps/materialx-official/MaterialX-1.39.5 --output renders/materialx_official
+.\build\bin\Release\caustra_viewer.exe --asset renders/materialx_official.caustra --bounces 24
+```
+
+![全部 MaterialX 官方示例在同一场景中的实际路径追踪结果](docs/images/materialx_official_gallery.png)
+
+上图为实际渲染：2160×1440、256 spp、24 次散射，未启用 DLSS。六类模型为 Standard Surface、OpenPBR、glTF PBR、USD Preview Surface、Disney Principled 与 Simple Hair，按各自的原生图求值。生成器保留材质图，同时输出可编辑 USD、原始纹理副本和完整覆盖清单；任何未支持的活动节点都会使构建失败。默认运行包纹理最长边为 512，USD 保留原分辨率；空间 SSS 使用 32³ 网格离散近似。重建、精度约定与测试说明见 [官方画廊文档](docs/materialx_gallery.md)。
 
 ## 渲染效果
 
@@ -40,7 +96,7 @@ DLSS 原生分辨率对照：960×720、64 个 1 spp 时域帧、RR 预设 E。�
 | `S` | 保存当前 PPM 与线性 HDR PFM 到 `renders/` |
 | `Esc` | 关闭窗口 |
 
-顶部控件可以选择 DLSS 模式、每次呈现的采样数，也可暂停、重置、保存和自动旋转。画面角落显示实际 FPS、渲染尺寸与当前视角累积样本数。初始化 DLSS 或改变分辨率时可能短暂等待；最小化后暂停 GPU 工作。大窗口的输出限制在约一百万像素，以控制回读和显示开销。
+顶部控件可以选择 DLSS 模式、每次呈现的采样数，也可暂停、重置、保存和自动旋转。画面角落显示实际 FPS、输出尺寸、DLSS 内部追踪尺寸与当前视角累积样本数。输出与视口物理像素一一对应，不设隐藏像素上限；放大窗口会重建相应 Buffer 和 DLSS 图像。DLSS Quality/Balanced/Performance 使用较低的内部分辨率；希望原生尺寸降噪可选择 DLSS Native。初始化 DLSS 或改变分辨率时可能短暂等待；最小化后暂停 GPU 工作。官方画廊包默认使用最长边 512 的纹理，放大窗口不会恢复源纹理已缩掉的细节，可按画廊文档重建更高分辨率纹理包。
 
 ```powershell
 # 明确指定模式；显式请求的 DLSS 不可用时会报错
@@ -52,6 +108,28 @@ DLSS 原生分辨率对照：960×720、64 个 1 spp 时域帧、RR 预设 E。�
 ```
 
 实时查看器目前使用 Win32/GDI，只在 Windows 构建。`-DCAUSTRA_BUILD_VIEWER=OFF` 可关闭这个目标；Linux 保留原有离线示例。可用 `-DCAUSTRA_VIEWER_TESTS=ON` 将需要桌面会话的窗口交互测试加入 CTest。
+
+## 性能测量
+
+`caustra_benchmark` 使用与查看器相同的场景、环绕相机和显示转换，每帧 1 spp，分别记录渲染/降噪、HDR 回读和色调转换的中位耗时，另报整帧 P95。默认剔除预热帧；这些是同步 API 的 CPU 墙钟时间，不含窗口绘制，也不是纯 GPU timestamp。
+
+```powershell
+./build/bin/Release/caustra_benchmark.exe --asset renders/features.caustra --width 960 --height 640 --bounces 24 --frames 12 --warmup 3 --dlss all
+# 真实窗口自动旋转，结束后输出各阶段中位耗时和运行 FPS
+./build/bin/Release/caustra_viewer.exe --asset renders/features.caustra --width 960 --height 640 --bounces 24 --dlss quality --auto-orbit --fps-limit 240 --frames 60
+```
+
+`--dlss all` 依次测 Off、Quality、Performance，需要可用的 DLSS；关闭 DLSS 的构建用 `--dlss off`。`--static` 测静态累积。`-DCAUSTRA_BUILD_BENCHMARK=OFF` 可关闭基准目标。当前优化包括默认切线图快速路径、GPU 本地资源、缓存回读、共享相机包含关系与预计算介质表；材质能力和路径深度保持原样。
+
+本机 NVIDIA GeForce RTX 5060、Windows Release，使用上述固定旋转轨迹、960×640 输出、24 层深度、1 spp，剔除 3 帧预热后统计 12 帧中位数：
+
+| 模式 | 优化前整帧耗时 | 优化后整帧耗时 | 提速 |
+| --- | ---: | ---: | ---: |
+| 原生 Path Trace，DLSS Off | 403.5 ms | 16.7 ms | 24.1× |
+| DLSS Quality | 202.0 ms | 11.0 ms | 18.4× |
+| DLSS Performance | 130.4 ms | 8.6 ms | 15.2× |
+
+相同输出尺寸的 HDR 回读由约 32 ms 降到约 1–2 ms。真实窗口自动旋转、DLSS Quality、24 层深度的 60 帧运行约 75 FPS（测试时限帧 240；默认查看器限帧 60）。同一场景 256 spp 的渲染及写出时间由 97.5 秒降到 3.09 秒，均不含初始化。性能优化阶段的图像对照中，线性 HDR 相对 RMSE 约 0.0015%，8 位预览在 614400 个像素中仅 1 个像素有差异。完整 21 项回归及关闭 DLSS/资产/窗口的最小配置 6 项回归均通过，包括 Vulkan 同步验证、薄体积、介质边棱、变换后近边界散射点、实体玻璃/镜像/SSS 擦边及相机内部出口，以及默认分辨率下 512 帧静止和 2048 帧环绕 DLSS 窗口测试。
 
 ## 构建与运行
 
@@ -110,12 +188,12 @@ image.savePfm("result.pfm");
 
 通过 `add_subdirectory` 引入此工程后链接 `caustra::caustra`。`examples/demo_scene.cpp` 演示如何构造三角网格、平滑法线、材质和实例变换；它属于示例，不属于渲染库。网格可以被多个实例共享。实例使用行主序 3×4 仿射矩阵，顶点索引属于各自网格。顶点位置以统一世界单位解释，颜色与发光均为线性 RGB。零法线会回退到三角形几何法线。
 
-相机、场景或渲染设置变化会清空累积；连续调用 `render` 则续采样。`setScene` 是同步的完整场景上传，会重建 BLAS/TLAS，适合作为第一阶段明确的输入边界。后续增加动态更新、纹理或自定义材质时，参阅 [docs/architecture.md](docs/architecture.md)。
+相机、场景或渲染设置变化会清空累积；连续调用 `render` 则续采样。`setScene` 是同步的完整场景上传，会重建 BLAS/TLAS，适合作为第一阶段明确的输入边界。后续增加动态更新或扩展材质节点时，参阅 [docs/architecture.md](docs/architecture.md)。
 
 ## 验证
 
-CPU 测试检查非法索引、退化网格、矩阵、相机、材质、DLSS 配置、图像保存和环绕相机控制。GPU 集成测试检查渐进采样确定性、连续相机与相机切换、尺寸变化、非均匀缩放、无面积光场景和失败上传后的状态。`--validation` 开启 Vulkan Validation Layer，错误会使测试失败。在 NVIDIA RTX 环境配置 `-DCAUSTRA_DLSS_GPU_TESTS=ON` 可将 DLSS 实际执行、升采样、配置切换、运动历史和历史重置加入 CTest，并启用同步验证。
+CPU 测试检查非法索引、退化网格、矩阵、相机、材质程序、纹理、DLSS 配置、图像保存和环绕相机控制。GPU 测试覆盖解析材质图、纹理方向/寻址/mip、BSDF 能量与采样、图驱动自发光、透明覆盖率，以及原有渐进采样、运动历史与开关回归。配置资产 Python 后，CTest 还会重编译真实 Blender USD、读取资产并渲染。可用 `-DCAUSTRA_ASSET_PYTHON=...` 指定安装了 `requirements-assets.txt` 的 Python；这些依赖仅用于资产编译/测试。`--validation` 开启 Vulkan Validation Layer，错误会使测试失败。在 NVIDIA RTX 环境配置 `-DCAUSTRA_DLSS_GPU_TESTS=ON` 可将 DLSS 实际执行加入 CTest，并启用同步验证。
 
-当前实现以清晰的核心接口和可运行性为优先：GPU 提交同步执行，输入/输出使用主机可见 coherent buffer，每次调用线程独占，不提供并发渲染。示例按米级空间构建，射线偏移包含固定绝对项，暂不支持微米级场景或极端巨大坐标。非常高亮的自发光和小面积强光会增加采样方差；没有降噪时低采样图像有 Monte Carlo 噪声。粗糙度在着色时设有有限下限，第一阶段不支持理想镜面、透射、体积、纹理、HDR 环境贴图或 glTF 扩展材质。
+当前实现以清晰的核心接口和可运行性为优先：GPU 提交同步执行，静态资源与累积缓冲使用 GPU 本地内存，上传/回读通过 staging，回读优先 CPU 缓存内存，每次调用线程独占，不提供并发渲染。纹理存在线性浮点 mip atlas，使用显式射线足迹过滤；每材质最多 128 条图指令。示例按米级空间构建，射线偏移包含固定绝对项，暂不支持微米级场景或极端巨大坐标。非常高亮的自发光、小面积强光、玻璃焦散和高密度多次散射会增加采样方差；没有降噪时低采样图像有 Monte Carlo 噪声。粗糙度在着色时设有有限下限，暂不支持理想 delta 镜面或 HDR 环境贴图。空间变化的 SSS/透射内部系数使用 32³ 网格近似；资产编译器的显式 volume 终端仍限均匀系数。实体 IOR、色散和 thin-walled 状态须在体内均匀，实体边界须完全覆盖；薄壁透射可以使用空间变化的表面颜色。
 
 许可证与改造来源见 [NOTICE](NOTICE) 和 [third_party/nvshaders/ORIGIN.md](third_party/nvshaders/ORIGIN.md)。

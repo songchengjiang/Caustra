@@ -6,6 +6,9 @@
 #include <windows.h>
 #include <windowsx.h>
 #include <caustra/renderer.hpp>
+#if CAUSTRA_HAS_ASSETS
+#include <caustra/asset.hpp>
+#endif
 #include "orbit_camera.hpp"
 #include "viewer_scene.hpp"
 
@@ -31,10 +34,11 @@ using Clock=std::chrono::steady_clock;
 constexpr int toolbarHeight=72, footerHeight=38;
 constexpr int idQuality=101, idSamples=102, idPause=103, idReset=104, idSave=105, idAuto=106;
 struct Options {
-  uint32_t width=960, height=640, frames=0, fpsLimit=60;
+  uint32_t width=960, height=640, frames=0, fpsLimit=60, maxBounces=6;
   int quality=-1; // auto: try DLSS quality, visibly fall back to raw path tracing
   bool validation=false, smoke=false, autoOrbit=false, help=false;
   std::filesystem::path screenshot;
+  std::filesystem::path asset;
 };
 uint32_t number(std::string_view value) {
   uint32_t n=0; auto r=std::from_chars(value.data(),value.data()+value.size(),n);
@@ -49,7 +53,7 @@ Options arguments(int argc,char** argv) {
     if(a=="--validation") {o.validation=true; continue;}
     if(a=="--smoke-test") {o.smoke=true; continue;}
     if(a=="--auto-orbit") {o.autoOrbit=true; continue;}
-    if(a!="--width" && a!="--height" && a!="--frames" && a!="--fps-limit" && a!="--dlss" && a!="--screenshot") throw std::invalid_argument("Unknown option: "+std::string(a));
+    if(a!="--width" && a!="--height" && a!="--frames" && a!="--fps-limit" && a!="--bounces" && a!="--dlss" && a!="--screenshot" && a!="--asset") throw std::invalid_argument("Unknown option: "+std::string(a));
     if(++i==argc) throw std::invalid_argument("Missing option value");
     std::string_view v=argv[i];
     if(a=="--dlss") {
@@ -61,12 +65,15 @@ Options arguments(int argc,char** argv) {
       else if(v=="performance") o.quality=4;
       else throw std::invalid_argument("DLSS mode: auto/off/native/quality/balanced/performance");
     } else if(a=="--screenshot") o.screenshot=argv[i];
+    else if(a=="--asset") o.asset=argv[i];
     else if(a=="--width") o.width=number(v);
     else if(a=="--height") o.height=number(v);
     else if(a=="--frames") o.frames=number(v);
+    else if(a=="--bounces") o.maxBounces=number(v);
     else o.fpsLimit=number(v);
   }
   if(o.width<320 || o.width>3840 || o.height<240 || o.height>2160 || o.fpsLimit>240) throw std::invalid_argument("Width 320..3840, height 240..2160, FPS limit 1..240");
+  if(o.maxBounces>64) throw std::invalid_argument("Path depth must be in 1..64");
   if(o.smoke && !o.frames) o.frames=24;
   if(o.smoke && o.frames<20) throw std::invalid_argument("Smoke test needs at least 20 frames");
   return o;
@@ -78,10 +85,12 @@ void help() {
     "--width N --height N    Initial viewport dimensions (default 960x640)\n"
     "--dlss MODE            auto/off/native/quality/balanced/performance (default auto)\n"
     "--fps-limit N          Presentation rate cap (default 60)\n"
+    "--bounces N            Scattering depth 1..64 (default 6; use 24 for glass/SSS)\n"
     "--validation           Vulkan validation and nonzero exit on errors\n"
     "--auto-orbit           Rotate the inspection camera continuously\n"
     "--frames N             Close after N presented frames\n"
     "--screenshot FILE.bmp  Save final window client including controls\n"
+    "--asset FILE.caustra   Inspect a compiled Blender USD/MaterialX asset\n"
     "--smoke-test           Exercise window input; with DLSS, also test combo/key off-on cycles\n";
 }
 std::wstring wide(const std::string& s) {
@@ -150,8 +159,18 @@ public:
     createControls(); ShowWindow(window_,SW_SHOW); UpdateWindow(window_);
 
     renderer_=std::make_unique<caustra::Renderer>(caustra::RendererOptions{options_.validation});
-    settings_.maxBounces=6; settings_.environment={0.025f,0.03f,0.04f,0};
-    renderer_->setScene(caustra::example::makeViewerScene());
+    settings_.maxBounces=options_.maxBounces; settings_.environment={0.025f,0.03f,0.04f,0};
+    if(options_.asset.empty()) renderer_->setScene(caustra::example::makeViewerScene());
+    else {
+#if CAUSTRA_HAS_ASSETS
+      auto asset=caustra::loadAsset(options_.asset);
+      orbit_.setHome(asset.camera);renderer_->setScene(asset.scene);
+      notice_="MaterialX asset: "+options_.asset.filename().string();
+      std::cout<<"Asset: "<<asset.scene.meshes.size()<<" meshes, "<<asset.scene.materials.size()<<" materials, "<<asset.scene.textures.size()<<" textures\n";
+#else
+      throw std::runtime_error("Asset reader disabled. Build with CAUSTRA_BUILD_ASSETS=ON.");
+#endif
+    }
     renderer_->setCamera(orbit_.camera());
     resizeRenderer();
     const int requested=options_.quality<0?2:options_.quality;
@@ -164,6 +183,7 @@ public:
     SetWindowTextW(window_,(L"Caustra | "+wide(renderer_->deviceName())+L" | Real-time Path Trace").c_str());
     std::cout<<"Device: "<<renderer_->deviceName()<<"\n"<<renderer_->dlssStatus()<<'\n';
     lastFrame_=lastStats_=Clock::now();
+    const auto presentationStart=Clock::now();
     auto nextFrame=Clock::now();
     MSG message{};
     while(running_) {
@@ -191,9 +211,13 @@ public:
       lastFrame_=now;
       if(autoOrbit_) {orbit_.orbit(dt*70,0); cameraDirty_=true;}
       if(cameraDirty_) {renderer_->updateCamera(orbit_.camera()); cameraDirty_=false;}
+      const auto renderStart=Clock::now();
       renderer_->render(samplesPerFrame_);
+      const auto rendered=Clock::now();
       image_=renderer_->readback();
+      const auto copied=Clock::now();
       toneMap();
+      const auto mapped=Clock::now();
       ++frames_; ++statsFrames_;
       auto finish=Clock::now();
       if(finish-lastStats_>std::chrono::milliseconds(500)) {
@@ -201,6 +225,11 @@ public:
       }
       nextFrame=now+std::chrono::microseconds(1000000/options_.fpsLimit);
       InvalidateRect(window_,nullptr,FALSE); UpdateWindow(window_);
+      const auto presented=Clock::now();
+      if(options_.frames && frames_>5 && frameTimes_.size()<1024) {
+        auto ms=[](auto a,auto b) {return std::chrono::duration<double,std::milli>(b-a).count();};
+        frameTimes_.push_back({ms(renderStart,rendered),ms(rendered,copied),ms(copied,mapped),ms(mapped,presented),ms(renderStart,presented)});
+      }
       if(options_.smoke) smokeStep();
       if(options_.frames && frames_>=options_.frames) {
         if(options_.smoke) verifySmoke();
@@ -210,6 +239,18 @@ public:
     }
     require(renderer_->validationErrorCount()==0,"Vulkan validation errors occurred");
     std::cout<<"Presented "<<frames_<<" frames; "<<settings_.width<<'x'<<settings_.height<<"; Vulkan errors: "<<renderer_->validationErrorCount()<<'\n';
+    if(options_.frames && !frameTimes_.empty()) {
+      std::array<double,5> median{};
+      for(size_t stage=0;stage<median.size();++stage) {
+        std::vector<double> values;values.reserve(frameTimes_.size());
+        for(const auto& frame:frameTimes_) values.push_back(frame[stage]);
+        std::sort(values.begin(),values.end());median[stage]=(values[(values.size()-1)/2]+values[values.size()/2])*.5;
+      }
+      const auto elapsed=std::chrono::duration<double>(Clock::now()-presentationStart).count();
+      std::cout<<std::fixed<<std::setprecision(3)<<"Median frame work (ms): render="<<median[0]<<", readback="<<median[1]
+        <<", toneMap="<<median[2]<<", present="<<median[3]<<", total="<<median[4]
+        <<"; run FPS="<<frames_/elapsed<<" (includes FPS cap and idle time)\n";
+    }
     return 0;
   }
 private:
@@ -224,11 +265,13 @@ private:
   caustra::RenderSettings settings_;
   caustra::Image image_;
   std::vector<uint32_t> dib_;
+  std::vector<std::array<double,5>> frameTimes_;
   BackBuffer backBuffer_;
   uint32_t samplesPerFrame_=1,frames_=0,statsFrames_=0;
   float fps_=0;
   Clock::time_point lastFrame_,lastStats_,resizeTime_;
   std::string notice_;
+  std::wstring resolutionStatus_;
   uint64_t initialHash_=0;
   uint32_t idleSamples_=0;
   int smokeDlssQuality_=0;
@@ -340,14 +383,23 @@ private:
     caustra::DlssSettings settings; settings.enabled=mode!=0; settings.preset=caustra::DlssPreset::E;
     settings.quality=mode<2?caustra::DlssQuality::Native:mode==2?caustra::DlssQuality::Quality:mode==3?caustra::DlssQuality::Balanced:caustra::DlssQuality::Performance;
     renderer_->setDlssSettings(settings); activeQuality_=mode; SendMessageW(quality_,CB_SETCURSEL,mode,0);
+    updateResolutionStatus();
+  }
+  void updateResolutionStatus() {
+    if(renderer_->dlssSettings().enabled) resolutionStatus_=wide(renderer_->dlssStatus());
+    else resolutionStatus_=L"Path Trace: "+std::to_wstring(settings_.width)+L" x "+std::to_wstring(settings_.height)+L" (native pixels)";
+    auto r=viewport();
+    std::cout<<"Viewport: "<<r.right<<'x'<<r.bottom-r.top<<"; output: "<<settings_.width<<'x'<<settings_.height<<"; "<<renderer_->dlssStatus()<<'\n';
   }
   void resizeRenderer() {
     if(!renderer_) return;
-    auto r=viewport(); double w=std::max<LONG>(32,r.right),h=std::max<LONG>(32,r.bottom-r.top);
-    // Bound CPU tone mapping and GDI presentation cost on large/high-DPI windows.
-    const double scale=std::min(1.0,std::sqrt(1000000.0/(w*h)));
-    auto next=settings_; next.width=std::max(32u,uint32_t(w*scale));next.height=std::max(32u,uint32_t(h*scale));
-    if(next.width!=settings_.width || next.height!=settings_.height || !image_.width) {renderer_->setSettings(next);settings_=next;}
+    auto r=viewport();
+    // The output follows physical viewport pixels. DLSS alone determines the
+    // path-tracing input size; a hidden pixel cap must not rescale its output.
+    auto next=settings_; next.width=uint32_t(std::max<LONG>(32,r.right));next.height=uint32_t(std::max<LONG>(32,r.bottom-r.top));
+    if(next.width!=settings_.width || next.height!=settings_.height || !image_.width) {
+      renderer_->setSettings(next);settings_=next;updateResolutionStatus();
+    }
     resizePending_=false;
   }
   void toneMap() {
@@ -374,10 +426,12 @@ private:
     SetBkMode(dc,TRANSPARENT);SetTextColor(dc,RGB(95,218,200));auto old=SelectObject(dc,titleFont_);TextOutW(dc,18,12,L"CAUSTRA",7);
     SelectObject(dc,font_);SetTextColor(dc,RGB(151,163,183));TextOutW(dc,20,42,L"PATH TRACE / LIVE",17);
     std::wostringstream stats;
-    stats<<std::fixed<<std::setprecision(1)<<fps_<<L" FPS  |  "<<image_.width<<L" x "<<image_.height<<L"  |  "<<(renderer_?renderer_->sampleCount():0)<<L" spp"<<(paused_?L"  PAUSED":L"");
+    stats<<std::fixed<<std::setprecision(1)<<fps_<<L" FPS  |  Output "<<image_.width<<L" x "<<image_.height<<L"  |  "<<(renderer_?renderer_->sampleCount():0)<<L" spp"<<(paused_?L"  PAUSED":L"");
     auto text=stats.str(); RECT badge{16,toolbarHeight+14,client.right-16,toolbarHeight+45};
-    auto badgeBrush=CreateSolidBrush(RGB(22,27,35)); RECT background=badge;background.right=std::min<LONG>(client.right-16,385);FillRect(dc,&background,badgeBrush);DeleteObject(badgeBrush);
+    auto badgeBrush=CreateSolidBrush(RGB(22,27,35)); RECT background=badge;background.right=std::min<LONG>(client.right-16,710);background.bottom+=22;FillRect(dc,&background,badgeBrush);DeleteObject(badgeBrush);
     SetTextColor(dc,RGB(235,241,247));DrawTextW(dc,text.c_str(),-1,&badge,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+    RECT resolutionBadge{16,toolbarHeight+45,client.right-16,toolbarHeight+65};
+    SetTextColor(dc,RGB(151,163,183));DrawTextW(dc,resolutionStatus_.c_str(),-1,&resolutionBadge,DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
     RECT status{16,client.bottom-footerHeight+8,client.right-12,client.bottom-6};
     auto hint=notice_.empty()?std::wstring(L"Left drag: orbit   |   Right drag: pan   |   Wheel: zoom   |   Space: pause   |   R: reset   |   S: save"):wide(notice_);
     SetTextColor(dc,notice_.empty()?RGB(151,163,183):RGB(255,198,108));DrawTextW(dc,hint.c_str(),-1,&status,DT_SINGLELINE|DT_END_ELLIPSIS);
@@ -448,8 +502,15 @@ private:
     if(frames_==4) {SendMessageW(window_,WM_MOUSEWHEEL,MAKEWPARAM(0,WHEEL_DELTA),0);++smokeActions_;}
     if(frames_==6) drag(WM_RBUTTONDOWN,WM_RBUTTONUP,MK_RBUTTON,24,-12);
     if(frames_==8) {
-      RECT r{};GetWindowRect(window_,&r);SetWindowPos(window_,nullptr,0,0,r.right-r.left+64,r.bottom-r.top+32,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
-      resizeRenderer();++smokeActions_;
+      RECT r{},client{};GetWindowRect(window_,&r);GetClientRect(window_,&client);
+      const int borderWidth=r.right-r.left-client.right,borderHeight=r.bottom-r.top-client.bottom;
+      SetWindowPos(window_,nullptr,0,0,std::max(r.right-r.left+64,LONG(1280+borderWidth)),
+        std::max(r.bottom-r.top+32,LONG(840+toolbarHeight+footerHeight+borderHeight)),SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
+      resizeRenderer();
+      const auto area=viewport();
+      require(uint64_t(area.right)*uint64_t(area.bottom-area.top)>1000000,"Resize regression must exceed the former hidden pixel cap");
+      require(settings_.width==uint32_t(area.right) && settings_.height==uint32_t(area.bottom-area.top),"Viewport output was silently downscaled after resize");
+      ++smokeActions_;
     }
     if(frames_==10) {SendMessageW(window_,WM_COMMAND,idPause,0);require(paused_,"Pause input failed");SendMessageW(window_,WM_COMMAND,idPause,0);require(!paused_,"Resume input failed");++smokeActions_;}
     if(frames_==12) {SendMessageW(window_,WM_COMMAND,idReset,0);++smokeActions_;}
@@ -461,6 +522,9 @@ private:
     require(initialHash_!=imageHash(),"Viewport did not change after orbit/pan/zoom");
     double energy=0;for(auto p:image_.pixels) energy+=p.x+p.y+p.z;require(energy>0,"Black viewer image");
     require(renderer_->validationErrorCount()==0,"Viewer Vulkan validation errors");
+    const auto area=viewport();
+    require(image_.width==uint32_t(area.right) && image_.height==uint32_t(area.bottom-area.top) &&
+      image_.pixels.size()==size_t(image_.width)*image_.height,"Resized readback does not match physical viewport pixels");
     verifyRepaint();
     if(smokeDlssQuality_) std::cout<<"DLSS window smoke passed: two off-on cycles via combo selection and D shortcut.\n";
     std::cout<<"Viewer smoke passed: window, orbit, pan, zoom, resize, pause/resume, reset, stable cached repaint, finite nonblack output.\n";

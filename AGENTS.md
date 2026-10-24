@@ -5,11 +5,19 @@ and Windows real-time viewer examples. The user explicitly requested removing mo
 capabilities. The user subsequently requested DLSS Ray Reconstruction as an
 optional rendering-core feature. Keep model import, editor and rasterizer
 dependencies outside the renderer library. Future asset loaders belong outside it.
+The user subsequently requested Blender USD + MaterialX as the primary material
+workflow. USD/MaterialX parsing lives in tools/caustra_assets; the optional
+caustra_assets C++ library only reads compiled portable packages. Keep these
+dependencies outside caustra. Unsupported active material features must fail
+explicitly; never silently replace MaterialX graphs with constant PBR values.
 
 Read README.md and docs/architecture.md for scope and extension boundaries.
 Keep include/caustra/renderer.hpp and src/shader_types.hpp synchronized with the
 buffer and push-constant layouts in shaders/pathtrace.slang. Preserve original
 NVIDIA notices in third_party/nvshaders; record any modifications there.
+Material IR opcodes/layouts must also match tools/caustra_assets/model.py and
+shaders/material_program.slang. Keep native OpenPBR and Standard Surface model
+semantics distinct. Preserve MaterialX/Aurora licenses and provenance records.
 
 Build: cmake --preset windows; cmake --build --preset windows-release.
 Test: ctest --preset windows-release (GPU test requires Vulkan validation layer

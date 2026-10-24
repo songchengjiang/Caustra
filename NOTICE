@@ -29,3 +29,22 @@ Optional NVIDIA DLSS/NGX SDK headers, static libraries and runtime binaries
 are external dependencies governed by their own NVIDIA license terms.
 The build references the installed SDK and deploys its release runtime files;
 these dependencies are not relicensed by Caustra's Apache-2.0 license.
+
+MaterialX material graph support includes mathematical shader implementations
+from Academy Software Foundation MaterialX 1.39.5 and Autodesk Aurora. Original
+copyright and license notices, source versions, hashes and adaptation records
+are preserved under third_party/materialx and third_party/aurora. MaterialX
+noise and HSV color operators additionally retain their Sony Pictures Imageworks
+/ OSL BSD notices. The native Disney, glTF, USD Preview and Chiang hair models,
+and hex-tiling pattern adaptations, are recorded in third_party/materialx/ORIGIN.md.
+The generated official gallery uses the pinned MaterialX v1.39.5 example assets;
+its source/resource copies include the upstream license and third-party notices.
+USD and MaterialX Python libraries are external asset-tool dependencies only.
+
+Numerical reference for triangle reconstruction and projected roundoff bounds:
+  Dirk Gerrit van Antwerpen, NVIDIA, 2023:
+  "Solving Self-Intersection Artifacts in DirectX Raytracing"
+  https://developer.nvidia.com/blog/solving-self-intersection-artifacts-in-directx-raytracing/
+Caustra applies these bounds to homogeneous-medium collision spawn positions,
+limited to the traversed segment; sampled distances and transport PDFs are
+kept separate from this numerical placement correction.

@@ -24,6 +24,11 @@ int main() {
     using caustra::example::OrbitCamera;
     OrbitCamera orbit;
     const auto initial = orbit.camera();
+    OrbitCamera imported;
+    auto importedHome=initial;importedHome.position={8,4,10,0};importedHome.target={1,1,0,0};importedHome.verticalFov=30;
+    imported.setHome(importedHome);const auto importedInitial=imported.camera();
+    imported.orbit(100,25);imported.zoom(2);imported.pan(30,20,480);imported.reset();
+    require(sameCamera(imported.camera(),importedInitial),"Reset must restore the imported inspection pose.");
     caustra::validateCamera(initial);
     caustra::validateScene(caustra::example::makeViewerScene());
 

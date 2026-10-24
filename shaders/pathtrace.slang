@@ -2,19 +2,17 @@
 // Rendering algorithm adapted from vk_gltf_renderer,
 // Copyright (c) 2023-2026, NVIDIA CORPORATION. All rights reserved.
 // Modified for a standalone scene API; see NOTICE for provenance.
-// Caustra's standalone path tracing integrator. The BSDF, RNG and ray offset
-// helpers are the unmodified nvpro_core2/nvshaders implementations used by
-// vk_gltf_renderer. No glTF scene structures, texture access or loader remain.
-#include "nvshaders/bsdf_functions.h.slang"
+// Caustra's standalone path tracing integrator reuses the NVIDIA RNG and ray
+// offset helpers. Material programs, surface closures and participating media
+// have separate implementations below. No glTF scene structures or loader remain.
 #include "nvshaders/random.h.slang"
 #include "nvshaders/ray_utils.h.slang"
 
 // These storage-buffer and push-constant layouts match renderer.hpp and
 // shader_types.hpp. Keep float4/uint4 boundaries when extending this interface.
-struct Vertex { float4 position; float4 normal; };
-struct Material { float4 baseColor; float4 emission; float4 surface; };
-struct GpuInstance { uint4 offsets; };
-struct GpuLight { float4 v0; float4 edge1; float4 edge2; float4 emission; };
+struct Vertex { float4 position; float4 normal; float4 texcoord; float4 tangent; };
+struct GpuInstance { uint4 offsets; float4 worldToObject[3],objectToWorld[3]; float4 objectMin,objectMax; };
+struct GpuLight { float4 v0; float4 edge1; float4 edge2; uint4 source; float4 normal0,normal1,normal2,tangent0,tangent1,tangent2; };
 struct PushConstants
 {
   float4 origin, lowerLeft, horizontal, vertical;
@@ -33,7 +31,6 @@ struct GpuCameraHistory
 [[vk::binding(1, 0)]] StructuredBuffer<Vertex> vertices;
 [[vk::binding(2, 0)]] StructuredBuffer<uint> indices;
 [[vk::binding(3, 0)]] StructuredBuffer<GpuInstance> instances;
-[[vk::binding(4, 0)]] StructuredBuffer<Material> materials;
 [[vk::binding(5, 0)]] StructuredBuffer<GpuLight> lights;
 [[vk::binding(6, 0)]] RWStructuredBuffer<float4> accumulation;
 // Optional DLSS RR input planes; byte offsets match renderer.cpp. Raw
@@ -44,6 +41,13 @@ struct GpuCameraHistory
 
 static const float FAR_DISTANCE = 1.0e30f;
 static const float GUIDE_FAR_DISTANCE = 1.0e4f;
+// counts.w shares the history flag with material/camera initialization modes.
+// The host uses the same pipeline and inserts compute-write/read barriers
+// between initialization dispatches and the ordinary path dispatch.
+static const uint CAMERA_HISTORY_VALID = 1u;
+static const uint INIT_CAMERA_MEDIUM = 1u << 31;
+static const uint INIT_MATERIAL_MEDIUM = 1u << 30;
+static const uint INIT_HETEROGENEOUS_MEDIUM = 1u << 29;
 
 bool finite3(float3 v) { return !any(isnan(v)) && !any(isinf(v)); }
 bool positivePdf(float p) { return p > 0.0f && !isnan(p) && !isinf(p); }
@@ -68,8 +72,45 @@ struct SurfaceHit
   float3 position;
   float3 geometricNormal;
   float3 shadingNormal;
-  uint materialIndex;
+  float3 objectPosition, tangent, bitangent;
+  float2 texcoord, uvDensity;
+  float distance, positionError;
+  bool frontFacing;
+  uint materialIndex, instanceIndex, primitiveIndex;
 };
+
+#include "material_program.slang"
+#include "surface_bsdf.slang"
+
+MaterialContext materialContext(SurfaceHit hit,float footprint)
+{
+  MaterialContext ctx;
+  ctx.position=hit.position;ctx.objectPosition=hit.objectPosition;
+  ctx.geometricNormal=hit.geometricNormal;ctx.normal=hit.shadingNormal;
+  ctx.tangent=hit.tangent;ctx.bitangent=hit.bitangent;
+  ctx.texcoord=hit.texcoord;ctx.uvFootprint=max(0.0f,footprint)*hit.uvDensity;
+  return ctx;
+}
+
+void surfaceFrame(inout SurfaceHit hit,Vertex a,Vertex b,Vertex c,float3 e1,float3 e2,float3 tangent,float handedness)
+{
+  float2 d1=b.texcoord.xy-a.texcoord.xy,d2=c.texcoord.xy-a.texcoord.xy;
+  float determinant=d1.x*d2.y-d1.y*d2.x;
+  float3 du=float3(0.0f),dv=float3(0.0f);
+  hit.uvDensity=float2(0.0f);
+  if(abs(determinant)>1e-12f)
+  {
+    du=(e1*d2.y-e2*d1.y)/determinant;dv=(e2*d1.x-e1*d2.x)/determinant;
+    float g11=dot(e1,e1),g12=dot(e1,e2),g22=dot(e2,e2),metric=g11*g22-g12*g12;
+    if(metric>1e-20f) hit.uvDensity=float2(length(e1*(d1.x*g22-d2.x*g12)+e2*(d2.x*g11-d1.x*g12)),
+                                                       length(e1*(d1.y*g22-d2.y*g12)+e2*(d2.y*g11-d1.y*g12)))/metric;
+  }
+  float3 fallback=abs(hit.shadingNormal.z)<0.99f?cross(float3(0,0,1),hit.shadingNormal):cross(float3(0,1,0),hit.shadingNormal);
+  if(dot(tangent,tangent)<1e-20f) tangent=dot(du,du)>1e-20f?du:fallback;
+  hit.tangent=safeNormal(tangent-hit.shadingNormal*dot(tangent,hit.shadingNormal),safeNormal(fallback,float3(1,0,0)));
+  float sign=handedness==0.0f?(dot(cross(hit.shadingNormal,hit.tangent),dv)<0.0f?-1.0f:1.0f):(handedness<0.0f?-1.0f:1.0f);
+  hit.bitangent=sign*cross(hit.shadingNormal,hit.tangent);
+}
 
 struct DenoiserGuides
 {
@@ -88,7 +129,7 @@ struct DenoiserGuides
 // (w=0) reprojects the constant environment without camera translation.
 float2 cameraMotion(float4 worldPositionOrDirection)
 {
-  if(pc.counts.w == 0) return float2(0.0f);
+  if((pc.counts.w & CAMERA_HISTORY_VALID) == 0) return float2(0.0f);
   float4 current = mul(cameraHistory.currentWorldToClip, worldPositionOrDirection);
   float4 previous = mul(cameraHistory.previousWorldToClip, worldPositionOrDirection);
   if(current.w <= pc.params.y || previous.w <= pc.params.y
@@ -130,15 +171,26 @@ void writeDenoiserGuides(uint index, float3 noisyRadiance, DenoiserGuides guides
   guideBuffer.Store(76 * pixels + 4 * index, asuint(guides.specularHitDistance));
 }
 
-bool traceSurface(RayDesc ray, out SurfaceHit hit)
+bool traceGeometry(RayDesc ray, out SurfaceHit hit,uint excludedInstance=0xffffffffu,float processedDistance=-1.0f)
 {
   hit = (SurfaceHit)0;
-  RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
-  query.TraceRayInline(topLevelAS, RAY_FLAG_NONE, 0xff, ray);
-  while(query.Proceed()) {}
+  bool continuation=excludedInstance!=0xffffffffu;
+  RayQuery<RAY_FLAG_NONE> query;
+  query.TraceRayInline(topLevelAS,continuation?RAY_FLAG_FORCE_NON_OPAQUE:RAY_FLAG_FORCE_OPAQUE,0xff,ray);
+  while(query.Proceed())
+  {
+    if(continuation && query.CandidateType()==CANDIDATE_NON_OPAQUE_TRIANGLE)
+    {
+      float distance=query.CandidateTriangleRayT();
+      if(distance<processedDistance || (distance==processedDistance && query.CandidateInstanceID()==excludedInstance)) continue;
+      query.CommitNonOpaqueTriangleHit();
+    }
+  }
   if(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) return false;
 
   GpuInstance instance = instances[query.CommittedInstanceID()];
+  hit.instanceIndex=query.CommittedInstanceID();
+  hit.primitiveIndex=query.CommittedPrimitiveIndex();
   uint first = instance.offsets.y + query.CommittedPrimitiveIndex() * 3;
   Vertex a = vertices[instance.offsets.x + indices[first]];
   Vertex b = vertices[instance.offsets.x + indices[first + 1]];
@@ -148,27 +200,71 @@ bool traceSurface(RayDesc ray, out SurfaceHit hit)
   float3x4 objectToWorld = query.CommittedObjectToWorld3x4();
   float3x4 worldToObject = query.CommittedWorldToObject3x4();
 
-  float3 objectPosition = a.position.xyz * bary.x + b.position.xyz * bary.y + c.position.xyz * bary.z;
-  hit.position = mul(objectToWorld, float4(objectPosition, 1.0f));
+  // Add the base vertex and affine translation last. Precise operations keep
+  // the reconstruction compatible with the error bound below.
+  precise float3 objectEdge1=b.position.xyz-a.position.xyz;
+  precise float3 objectEdge2=c.position.xyz-a.position.xyz;
+  precise float3 objectPosition=a.position.xyz+fma(float3(uv.x),objectEdge1,uv.y*objectEdge2);
+  precise float3 worldPosition;
+  worldPosition.x=objectToWorld[0].w+fma(objectToWorld[0].x,objectPosition.x,
+    fma(objectToWorld[0].y,objectPosition.y,objectToWorld[0].z*objectPosition.z));
+  worldPosition.y=objectToWorld[1].w+fma(objectToWorld[1].x,objectPosition.x,
+    fma(objectToWorld[1].y,objectPosition.y,objectToWorld[1].z*objectPosition.z));
+  worldPosition.z=objectToWorld[2].w+fma(objectToWorld[2].x,objectPosition.x,
+    fma(objectToWorld[2].y,objectPosition.y,objectToWorld[2].z*objectPosition.z));
+  hit.position=worldPosition;
+  hit.objectPosition=objectPosition;
+  hit.texcoord=a.texcoord.xy*bary.x+b.texcoord.xy*bary.y+c.texcoord.xy*bary.z;
+  hit.distance=query.CommittedRayT();
   // Deriving the geometric normal from world-space edges also handles mirrored
   // instances. The interpolated normal needs the inverse transpose under scale.
   float3 edge1 = mul(objectToWorld, float4(b.position.xyz - a.position.xyz, 0.0f));
   float3 edge2 = mul(objectToWorld, float4(c.position.xyz - a.position.xyz, 0.0f));
   hit.geometricNormal = safeNormal(cross(edge1, edge2), -ray.Direction);
+  // Normal clearance must include object/world round trips, not just one
+  // world-space ULP (a small world coordinate may cancel a large translation).
+  // Numerical analysis: NVIDIA, "Solving Self-Intersection Artifacts in
+  // DirectX Raytracing" (2023); formulas apply to Vulkan triangle traversal.
+  const float reconstructionRoundoff=5.9604644775390625e-8f;
+  const float triangleRoundoff=1.7881397695873602e-7f;
+  const float transformRoundoff=1.1920931797249068e-7f;
+  float3 extent3=abs(objectEdge1)+abs(objectEdge2)+abs(abs(objectEdge1)-abs(objectEdge2));
+  float extent=max(extent3.x,max(extent3.y,extent3.z));
+  float3 objectError=reconstructionRoundoff*abs(a.position.xyz)+triangleRoundoff*extent;
+  objectError+=transformRoundoff*mul(abs(worldToObject),float4(abs(worldPosition),1));
+  float3 worldError=triangleRoundoff*mul(abs((float3x3)objectToWorld),abs(objectPosition))+
+    transformRoundoff*abs(float3(objectToWorld[0].w,objectToWorld[1].w,objectToWorld[2].w));
+  float3 objectNormal=cross(objectEdge1,objectEdge2);
+  float3 transformedNormal=objectNormal.x*worldToObject[0].xyz+
+    objectNormal.y*worldToObject[1].xyz+objectNormal.z*worldToObject[2].xyz;
+  float inverseNormalLength=rsqrt(max(dot(transformedNormal,transformedNormal),1.0e-30f));
+  hit.positionError=2.0f*(dot(objectError,abs(objectNormal))*inverseNormalLength+
+    dot(worldError,abs(hit.geometricNormal)));
+  // Use traversal's object-space winding decision. Recomputing it from a
+  // world-space cross/dot can disagree at grazing facets after rounding and
+  // turn an exterior entry into an unmatched exit. TLAS transforms, including
+  // mirrored instances, do not change Vulkan's object-space facing flag.
+  hit.frontFacing=query.CommittedTriangleFrontFace();
   float3 n = a.normal.xyz * bary.x + b.normal.xyz * bary.y + c.normal.xyz * bary.z;
   float3 worldNormal = n.x * worldToObject[0].xyz + n.y * worldToObject[1].xyz + n.z * worldToObject[2].xyz;
   hit.shadingNormal = safeNormal(worldNormal, hit.geometricNormal);
 
-  // Phase 1 materials and area emitters are opaque and two-sided.
+  // Face the local shading frame toward the incident ray, while preserving
+  // physical frontFacing for medium transitions and one-sided emission.
   if(dot(hit.geometricNormal, ray.Direction) > 0.0f) hit.geometricNormal = -hit.geometricNormal;
   if(dot(hit.shadingNormal, hit.geometricNormal) < 0.0f) hit.shadingNormal = -hit.shadingNormal;
   // Prevent the reflection lobe of a strongly interpolated normal from sending
   // the incoming ray through the geometric surface.
   if(dot(reflect(ray.Direction, hit.shadingNormal), hit.geometricNormal) <= 0.0f)
     hit.shadingNormal = hit.geometricNormal;
+  float4 tangent=a.tangent*bary.x+b.tangent*bary.y+c.tangent*bary.z;
+  float orientation=dot(cross(objectToWorld[0].xyz,objectToWorld[1].xyz),objectToWorld[2].xyz)<0.0f?-1.0f:1.0f;
+  surfaceFrame(hit,a,b,c,edge1,edge2,mul(objectToWorld,float4(tangent.xyz,0.0f)),tangent.w*orientation);
   hit.materialIndex = instance.offsets.z;
   return true;
 }
+
+#include "medium.slang"
 
 float3 rayOrigin(float3 position, float3 normal)
 {
@@ -176,20 +272,76 @@ float3 rayOrigin(float3 position, float3 normal)
   return offsetRay(position, normal) + normal * pc.params.y;
 }
 
-bool visible(float3 origin, float3 target)
+bool traceSurface(inout RayDesc ray,inout float coneWidth,float coneSpread,inout uint seed,out SurfaceHit hit,out MaterialEvaluation material,
+                  uint excludedInstance=0xffffffffu,float processedDistance=-1.0f)
+{
+  material=(MaterialEvaluation)0;hit=(SurfaceHit)0;
+  float initialWidth=coneWidth;
+  // Advance the intersection interval, preserving the exact original ray line.
+  // Repeated normal offsets would accumulate drift through deep alpha layers.
+  for(;;)
+  {
+    if(ray.TMin>ray.TMax) return false;
+    if(!traceGeometry(ray,hit,excludedInstance,processedDistance)) return false;
+    coneWidth=initialWidth+hit.distance*coneSpread;
+    material=evaluateMaterialProgram(hit.materialIndex,materialContext(hit,coneWidth));
+    if(material.material.surface.z==1.0f && !hit.frontFacing) material.material.emission.xyz=float3(0.0f);
+    float opacity=materialOpacity(material.material);
+    if(opacity>=1.0f || (opacity>0.0f && rand(seed)<opacity)) return true;
+    ray.TMin=asfloat(max(asuint(hit.distance)+1u,0x00800000u));
+    if(ray.TMin>ray.TMax) return false;
+  }
+}
+
+float3 visible(float3 origin, float3 target,float coneWidth,float coneSpread,MediumStack media,uint source)
 {
   float3 delta = target - origin;
   float distance = length(delta);
-  if(distance <= pc.params.y) return false;
+  if(distance <= pc.params.y) return float3(0.0f);
   RayDesc ray;
   ray.Origin = origin;
   ray.Direction = delta / distance;
   ray.TMin = 0.0f;
   ray.TMax = max(0.0f, distance - pc.params.y);
-  RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
-  query.TraceRayInline(topLevelAS, RAY_FLAG_NONE, 0xff, ray);
-  while(query.Proceed()) {}
-  return query.CommittedStatus() == COMMITTED_NOTHING;
+  float3 transmittance=float3(1.0f);
+  float initialWidth=coneWidth;
+  float previousDistance=0.0f;
+  MediumBoundaryProgress previousBoundary=(MediumBoundaryProgress)0;
+  for(;;)
+  {
+    SurfaceHit hit;
+    bool found=traceGeometry(ray,hit,previousBoundary.active?previousBoundary.instanceIndex:0xffffffffu,previousBoundary.processedDistance);
+    GpuMaterial material=(GpuMaterial)0;
+    if(found)
+    {
+      coneWidth=initialWidth+hit.distance*coneSpread;
+      material=evaluateMaterialProgram(hit.materialIndex,materialContext(hit,coneWidth)).material;
+      if(material.volume.z==1.0f && repeatedMediumBoundary(previousBoundary,hit))
+      {
+        previousBoundary.processedDistance=max(previousBoundary.processedDistance,hit.distance);
+        ray.TMin=mediumResumeDistance(previousBoundary.processedDistance);
+        if(ray.TMin>ray.TMax) return transmittance;
+        continue;
+      }
+    }
+    float endpoint=found?hit.distance:ray.TMax;
+    transmittance*=mediumRayTransmittance(media,fma(ray.Direction,float3(previousDistance),ray.Origin),ray.Direction,max(0.0f,endpoint-previousDistance));
+    if(!found) return transmittance;
+    bool tangent=material.volume.z!=1.0f && materialHasInterior(material) &&
+      mediumBoundaryTangent(ray.Origin,ray.Direction,hit);
+    if(material.volume.z==1.0f || tangent)
+    {
+      uint previousCount=media.count;
+      if(!tangent && !mediumCross(media,hit,material,source,ray.Origin,ray.Direction)) return float3(0.0f);
+      previousBoundary=recordMediumBoundary(ray,hit);
+      previousBoundary.planeActive=media.count!=previousCount;
+    }
+    else transmittance*=1.0f-materialOpacity(material);
+    if(!any(transmittance>0.0f)) return float3(0.0f);
+    previousDistance=hit.distance;
+    ray.TMin=material.volume.z==1.0f || tangent?mediumResumeDistance(hit.distance):asfloat(max(asuint(hit.distance)+1u,0x00800000u));
+    if(ray.TMin>ray.TMax) return transmittance;
+  }
 }
 
 // Each triangle is selected in proportion to world area, then sampled uniformly
@@ -214,7 +366,8 @@ uint selectLight(float randomValue)
   return lo;
 }
 
-float3 sampleDirect(SurfaceHit hit, PbrMaterial pbr, float3 view, inout uint seed)
+float3 sampleDirect(SurfaceHit hit, SurfaceClosure closure, float3 view, float footprint, float coneSpread,
+                    inout uint seed,MediumStack media,bool phaseEvent,MediumCoefficients medium)
 {
   if(pc.counts.x == 0 || pc.params.x <= 0.0f) return float3(0.0f);
   GpuLight light = lights[selectLight(rand(seed))];
@@ -225,20 +378,53 @@ float3 sampleDirect(SurfaceHit hit, PbrMaterial pbr, float3 view, inout uint see
   float distanceSquared = dot(delta, delta);
   if(distanceSquared <= pc.params.y * pc.params.y || !finite3(delta)) return float3(0.0f);
   float3 direction = delta * rsqrt(distanceSquared);
-  if(dot(direction, hit.geometricNormal) <= 0.0f) return float3(0.0f);
-  float3 lightNormal = safeNormal(cross(light.edge1.xyz, light.edge2.xyz), -direction);
+  float3 lightNormal = safeNormal(cross(light.edge1.xyz, light.edge2.xyz)*light.edge2.w, -direction);
+  bool lightFront=dot(lightNormal,-direction)>0.0f;
   float lightPdf = emitterPdf(distanceSquared, abs(dot(lightNormal, -direction)));
   if(!positivePdf(lightPdf)) return float3(0.0f);
 
-  BsdfEvaluateData eval = (BsdfEvaluateData)0;
-  eval.k1 = view;
-  eval.k2 = direction;
-  bsdfEvaluateSimple(eval, pbr); // includes the surface cosine
-  float3 value = eval.bsdf_diffuse + eval.bsdf_glossy;
+  SurfaceEval eval;
+  if(phaseEvent)
+  {
+    eval.fCos=mediumPhase(medium,-view,direction);
+    eval.pdf=mediumPhasePdf(medium,-view,direction);
+  }
+  else eval=evaluateSurface(closure,view,direction);
+  float3 value=eval.fCos;
   if(!finite3(value) || !any(value > 0.0f)) return float3(0.0f);
   if(dot(lightNormal, -direction) < 0.0f) lightNormal = -lightNormal;
-  if(!visible(rayOrigin(hit.position, hit.geometricNormal), rayOrigin(lightPosition, lightNormal))) return float3(0.0f);
-  return value * light.emission.xyz * (balanceWeight(lightPdf, eval.pdf) / lightPdf);
+  float3 origin=hit.position;
+  if(!phaseEvent)
+  {
+    bool across=dot(direction,hit.geometricNormal)<0.0f;
+    origin=rayOrigin(hit.position,across?-hit.geometricNormal:hit.geometricNormal);
+    if(across)
+    {
+      // Closure material has already received surface-only color adjustments;
+      // interior calibration takes the original graph parameters exactly once.
+      GpuMaterial boundary=evaluateMaterialProgram(hit.materialIndex,materialContext(hit,footprint)).material;
+      if(!mediumCross(media,hit,boundary,2,origin,direction)) return float3(0.0f);
+    }
+  }
+  float3 visibility=visible(origin,rayOrigin(lightPosition,lightNormal),footprint,coneSpread,media,phaseEvent?1:5);
+  if(!any(visibility>0.0f)) return float3(0.0f);
+  Vertex a=vertices[light.source.x],b=vertices[light.source.y],c=vertices[light.source.z];
+  float3 bary=float3(1.0f-u,u*(1.0f-v),u*v);
+  SurfaceHit lightHit=(SurfaceHit)0;
+  lightHit.position=lightPosition;lightHit.geometricNormal=lightNormal;
+  lightHit.shadingNormal=safeNormal(light.normal0.xyz*bary.x+light.normal1.xyz*bary.y+light.normal2.xyz*bary.z,lightNormal);
+  if(dot(lightHit.shadingNormal,lightNormal)<0.0f) lightHit.shadingNormal=-lightHit.shadingNormal;
+  if(dot(reflect(direction,lightHit.shadingNormal),lightNormal)<=0.0f) lightHit.shadingNormal=lightNormal;
+  lightHit.objectPosition=a.position.xyz*bary.x+b.position.xyz*bary.y+c.position.xyz*bary.z;
+  lightHit.texcoord=a.texcoord.xy*bary.x+b.texcoord.xy*bary.y+c.texcoord.xy*bary.z;
+  float4 tangent=light.tangent0*bary.x+light.tangent1*bary.y+light.tangent2*bary.z;
+  surfaceFrame(lightHit,a,b,c,light.edge1.xyz,light.edge2.xyz,tangent.xyz,tangent.w);
+  float lightFootprint=footprint+sqrt(distanceSquared)*coneSpread;
+  MaterialEvaluation emitter=evaluateMaterialProgram(light.source.w,materialContext(lightHit,lightFootprint));
+  if(emitter.material.surface.z==1.0f && !lightFront) return float3(0.0f);
+  SurfaceClosure emitterClosure=makeSurfaceClosure(emitter,materialContext(lightHit,lightFootprint),-direction);
+  float3 emission=surfaceEmission(emitterClosure,-direction)*emitterClosure.opacity;
+  return visibility*value*emission*(balanceWeight(lightPdf,eval.pdf)/lightPdf);
 }
 
 float3 pathTrace(RayDesc ray, inout uint seed, out DenoiserGuides guides)
@@ -248,98 +434,197 @@ float3 pathTrace(RayDesc ray, inout uint seed, out DenoiserGuides guides)
   guides.linearDepth = GUIDE_FAR_DISTANCE;
   bool dlssEnabled = pc.counts.y == 1;
   if(dlssEnabled) guides.motion = cameraMotion(float4(ray.Direction, 0.0f));
-  bool captureSpecularHit = false;
-  float3 radiance = float3(0.0f);
-  float3 throughput = float3(1.0f);
+  bool captureSpecularHit = false, previousDelta = true;
+  float3 radiance = float3(0.0f), throughput = float3(1.0f);
   float3 previousPosition = ray.Origin;
   float previousPdf = 0.0f;
+  float coneWidth = 0.0f, coneSpread = length(pc.vertical.xyz) / float(pc.dimensions.y);
+  float segmentBegin = 0.0f;
+  float3 segmentStartPosition = ray.Origin;
+  uint bounce = 0, hero = MEDIUM_NO_HERO;
+  MediumStack media = (MediumStack)0;
+  MediumBoundaryProgress previousBoundary = (MediumBoundaryProgress)0;
+  if(pc.environment.w > 0.0f) media = loadCameraMediumStack(seed, hero);
+  if(hero < 3) { throughput = float3(0.0f); throughput[hero] = 3.0f; }
 
-  // maxBounces counts scattering events. The final trace still collects an
-  // emitter or environment endpoint, so NEE and BSDF MIS remain paired at depth.
-  for(uint bounce = 0; bounce <= pc.dimensions.w; ++bounce)
+  // Only scattering events consume the integration depth. Invisible medium
+  // interfaces and coverage-zero layers preserve the exact original ray line.
+  for(;;)
   {
     SurfaceHit hit;
-    if(!traceSurface(ray, hit))
+    MaterialEvaluation material;
+    float hitConeWidth = coneWidth;
+    bool found = traceSurface(ray, hitConeWidth, coneSpread, seed, hit, material,
+      previousBoundary.active?previousBoundary.instanceIndex:0xffffffffu,previousBoundary.processedDistance);
+    if(found && material.material.volume.z == 1.0f && repeatedMediumBoundary(previousBoundary, hit))
+    {
+      // Filter the processed contact explicitly, leaving even its immediately
+      // following representable ray parameter available to a real thin exit.
+      previousBoundary.processedDistance=max(previousBoundary.processedDistance,hit.distance);
+      ray.TMin=mediumResumeDistance(previousBoundary.processedDistance);
+      continue;
+    }
+    float endpoint = found ? hit.distance : FAR_DISTANCE;
+    float segmentLength = max(endpoint - segmentBegin, 0.0f);
+    MediumCoefficients medium;
+    float3 mediumSource;
+    MediumFlight flight = sampleCurrentMedium(media,segmentStartPosition,ray.Direction,segmentLength,throughput,seed,medium,mediumSource);
+    radiance += throughput * mediumSource;
+    throughput *= flight.weight;
+    if(!finite3(throughput) || !finite3(radiance)) { mediumError(4); break; }
+    if(!any(throughput > 0.0f)) break;
+
+    if(flight.scattered)
+    {
+      if(bounce == pc.dimensions.w) break;
+      float distance = segmentBegin + flight.distance;
+      float3 position = mediumFlightPoint(ray, segmentStartPosition, previousBoundary,
+        hit, found, flight.distance, segmentLength);
+      float scatterCone = coneWidth + distance * coneSpread;
+      float scatterSpread = min(1.0f, coneSpread + 0.25f);
+      SurfaceHit phaseHit = (SurfaceHit)0;
+      phaseHit.position = position;
+      radiance += throughput * sampleDirect(phaseHit, (SurfaceClosure)0, -ray.Direction,
+        scatterCone, scatterSpread, seed, media, true, medium);
+      float phasePdf;
+      float3 phaseWeight;
+      float3 direction = sampleMediumPhase(medium, ray.Direction, seed, phasePdf, phaseWeight);
+      throughput *= phaseWeight;
+      previousPosition = position; previousPdf = phasePdf; previousDelta = false;
+      if(dlssEnabled && bounce == 0)
+      {
+        float3 forward = normalize(pc.lowerLeft.xyz + 0.5f * pc.horizontal.xyz + 0.5f * pc.vertical.xyz);
+        guides.linearDepth = min(dot(position - pc.origin.xyz, forward), GUIDE_FAR_DISTANCE);
+        guides.motion = cameraMotion(float4(position, 1.0f));
+      }
+      captureSpecularHit = false;
+      ++bounce;
+      if(bounce >= 3)
+      {
+        float survival = clamp(max(throughput.x, max(throughput.y, throughput.z)), 0.05f, 0.95f);
+        if(rand(seed) >= survival) break;
+        throughput /= survival;
+      }
+      ray.Origin = position; ray.Direction = direction; ray.TMin = 0.0f; ray.TMax = FAR_DISTANCE;
+      segmentStartPosition = position;
+      previousBoundary.active = false;
+      segmentBegin = 0.0f; coneWidth = scatterCone; coneSpread = scatterSpread;
+      continue;
+    }
+
+    if(!found)
     {
       if(captureSpecularHit) guides.specularHitDistance = GUIDE_FAR_DISTANCE;
-      // The constant environment is sampled only by BSDF paths, so weight = 1.
       radiance += throughput * pc.environment.xyz;
       break;
     }
-    Material material = materials[hit.materialIndex];
+    MaterialContext ctx = materialContext(hit, hitConeWidth);
+    // Both null volumes and solid glass/SSS meshes can have zero-length edge
+    // contacts. Reject a proven contact before selecting an optical interface
+    // or evaluating a BSDF, rather than treating its lone exit as refraction.
+    bool tangent=material.material.volume.z!=1.0f && materialHasInterior(material.material) &&
+      mediumBoundaryTangent(ray.Origin,ray.Direction,hit);
+    if(material.material.volume.z == 1.0f || tangent)
+    {
+      uint previousCount=media.count;
+      if(!tangent && !mediumCross(media, hit, material.material,3,ray.Origin,ray.Direction)) break;
+      previousBoundary = recordMediumBoundary(ray, hit);
+      previousBoundary.planeActive=media.count!=previousCount;
+      segmentBegin = hit.distance;
+      segmentStartPosition = hit.position;
+      ray.TMin=mediumResumeDistance(hit.distance);
+      continue;
+    }
+    if(hero == MEDIUM_NO_HERO && material.material.thinFilm.w > 0.0f && material.material.program.z!=3)
+    {
+      hero = min(uint(rand(seed) * 3.0f), 2);
+      float selected = throughput[hero] * 3.0f;
+      throughput = float3(0.0f); throughput[hero] = selected;
+    }
+    SurfaceClosure closure = makeSurfaceClosure(material, ctx, -ray.Direction);
+    float etaI = currentMediumIor(media, hero);
+    float etaT = materialHasInterior(material.material) && material.material.subsurface.w == 0.0f ?
+      destinationMediumIor(media, hit, hero) : materialInteriorIor(material.material, hero);
+    configureSurfaceInterface(closure, etaI, etaT);
+    closure.entering = hit.frontFacing;
+    SurfaceGuides features = surfaceGuides(closure, -ray.Direction);
     if(captureSpecularHit)
     {
-      guides.specularHitDistance = min(length(hit.position - ray.Origin), GUIDE_FAR_DISTANCE);
+      guides.specularHitDistance = min(hit.distance, GUIDE_FAR_DISTANCE);
       captureSpecularHit = false;
     }
     if(dlssEnabled && bounce == 0)
     {
-      // Capture the same jittered primary surface that produced this frame's
-      // noisy color. Metal has no diffuse lobe; its tint belongs in F0.
-      float metallic = saturate(material.surface.x);
-      guides.diffuseAlbedo = saturate(material.baseColor.xyz) * (1.0f - metallic);
-      guides.roughness = clamp(material.surface.y, 0.02f, 1.0f);
-      guides.normal = hit.shadingNormal;
-      float3 f0 = lerp(float3(0.04f), saturate(material.baseColor.xyz), metallic);
-      guides.specularAlbedo = specularGuideAlbedo(f0, guides.roughness * guides.roughness,
-                                                 saturate(dot(hit.shadingNormal, -ray.Direction)));
-      float3 viewForward = normalize(pc.lowerLeft.xyz + 0.5f * pc.horizontal.xyz + 0.5f * pc.vertical.xyz);
-      guides.linearDepth = clamp(dot(hit.position - pc.origin.xyz, viewForward), pc.params.y, GUIDE_FAR_DISTANCE);
+      guides.diffuseAlbedo = features.diffuseAlbedo; guides.specularAlbedo = features.specularAlbedo;
+      guides.roughness = features.roughness; guides.normal = features.normal;
+      float3 forward = normalize(pc.lowerLeft.xyz + 0.5f * pc.horizontal.xyz + 0.5f * pc.vertical.xyz);
+      guides.linearDepth = clamp(dot(hit.position - pc.origin.xyz, forward), pc.params.y, GUIDE_FAR_DISTANCE);
       guides.motion = cameraMotion(float4(hit.position, 1.0f));
     }
-    if(any(material.emission.xyz > 0.0f))
+    if(any(closure.emission > 0.0f) && (material.material.surface.z != 1.0f || hit.frontFacing))
     {
       float weight = 1.0f;
-      if(bounce > 0)
+      if(bounce > 0 && !previousDelta)
       {
         float3 delta = hit.position - previousPosition;
         float lightPdf = emitterPdf(dot(delta, delta), abs(dot(hit.geometricNormal, -ray.Direction)));
         weight = balanceWeight(previousPdf, lightPdf);
       }
-      radiance += throughput * material.emission.xyz * weight;
+      radiance += throughput * surfaceEmission(closure, -ray.Direction) * weight;
     }
     if(bounce == pc.dimensions.w) break;
 
-    // NV's constructor converts perceptual roughness to GGX alpha (squared).
-    // A finite floor keeps the simple BSDF's GGX model away from singular PDFs.
-    PbrMaterial pbr = defaultPbrMaterial(material.baseColor.xyz, material.surface.x,
-                                        max(material.surface.y, 0.02f), hit.shadingNormal, hit.geometricNormal);
-    radiance += throughput * sampleDirect(hit, pbr, -ray.Direction, seed);
-
-    BsdfSampleData sample = (BsdfSampleData)0;
-    sample.k1 = -ray.Direction;
-    sample.xi = float3(rand(seed), rand(seed), rand(seed));
-    bsdfSampleSimple(sample, pbr);
-    if(sample.event_type == BSDF_EVENT_ABSORB || !positivePdf(sample.pdf)
-       || !finite3(sample.bsdf_over_pdf) || dot(sample.k2, hit.geometricNormal) <= 0.0f) break;
-    throughput *= sample.bsdf_over_pdf;
+    float scatteredSpread = min(1.0f, coneSpread + features.roughness * features.roughness * 0.25f);
+    radiance += throughput * sampleDirect(hit, closure, -ray.Direction, hitConeWidth,
+      scatteredSpread, seed, media, false, medium);
+    SurfaceSample sample = sampleSurface(closure, -ray.Direction, float3(rand(seed), rand(seed), rand(seed)));
+    if(sample.event == 0 || !positivePdf(sample.pdf) || !finite3(sample.weight)) break;
+    bool across = dot(sample.direction, hit.geometricNormal) < 0.0f;
+    if(across && !mediumCross(media, hit, material.material,4,ray.Origin,ray.Direction)) break;
+    throughput *= sample.weight;
+    if(!finite3(throughput)) { mediumError(4); break; }
     float maximum = max(throughput.x, max(throughput.y, throughput.z));
-    if(!finite3(throughput) || maximum <= 0.0f) break;
-
-    // Russian roulette after three scattering events; the surviving throughput
-    // compensates for its probability. Directional PDFs stay conditional on RR.
-    if(bounce >= 2)
+    if(maximum <= 0.0f) break;
+    ++bounce;
+    if(bounce >= 3)
     {
       float survival = clamp(maximum, 0.05f, 0.95f);
       if(rand(seed) >= survival) break;
       throughput /= survival;
     }
-    previousPosition = hit.position;
-    previousPdf = sample.pdf;
-    if(dlssEnabled && bounce == 0)
-      captureSpecularHit = sample.event_type == BSDF_EVENT_GLOSSY_REFLECTION;
-    ray.Origin = rayOrigin(hit.position, hit.geometricNormal);
-    ray.Direction = normalize(sample.k2);
-    ray.TMin = 0.0f;
-    ray.TMax = FAR_DISTANCE;
+    previousPosition = hit.position; previousPdf = sample.pdf; previousDelta = sample.delta;
+    if(dlssEnabled && bounce == 1) captureSpecularHit = sample.event == 2 || sample.event == 3 || sample.event == 4;
+    coneWidth = hitConeWidth; coneSpread = scatteredSpread; segmentBegin = 0.0f;
+    ray.Origin = rayOrigin(hit.position, across ? -hit.geometricNormal : hit.geometricNormal);
+    segmentStartPosition = ray.Origin;
+    ray.Direction = normalize(sample.direction); ray.TMin = 0.0f; ray.TMax = FAR_DISTANCE;
+    previousBoundary.active = false;
   }
   return finite3(radiance) ? max(radiance, float3(0.0f)) : float3(0.0f);
 }
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
-void main(uint3 thread : SV_DispatchThreadID)
+void main(uint3 thread : SV_DispatchThreadID, uint3 groupID : SV_GroupID, uint groupIndex : SV_GroupIndex)
 {
+  if((pc.counts.w & INIT_HETEROGENEOUS_MEDIUM) != 0)
+  {
+    initializeHeterogeneousMedium(pc.dimensions.x,groupID.x*64+groupIndex);
+    return;
+  }
+  if((pc.counts.w & INIT_MATERIAL_MEDIUM) != 0)
+  {
+    // Only this initialization mode uses dimensions.x as the dispatch X group
+    // count. A two-dimensional grid supports the device's dispatch limits.
+    uint materialIndex = (groupID.x + groupID.y * pc.dimensions.x) * 64 + groupIndex;
+    initializeMaterialMedium(materialIndex);
+    return;
+  }
+  if((pc.counts.w & INIT_CAMERA_MEDIUM) != 0)
+  {
+    if(all(thread == uint3(0))) initializeCameraMediumCache();
+    return;
+  }
   if(thread.x >= pc.dimensions.x || thread.y >= pc.dimensions.y) return;
   uint index = thread.y * pc.dimensions.x + thread.x;
   uint seed = xxhash32(uint3(thread.xy, pc.counts.z));

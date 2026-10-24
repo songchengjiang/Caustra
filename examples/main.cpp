@@ -1,5 +1,8 @@
 #include <caustra/renderer.hpp>
 #include "demo_scene.hpp"
+#if CAUSTRA_HAS_ASSETS
+#include <caustra/asset.hpp>
+#endif
 
 #include <algorithm>
 #include <charconv>
@@ -17,6 +20,7 @@ struct Arguments {
   caustra::DlssSettings dlss;
   uint32_t samples = 64;
   std::filesystem::path output = "render";
+  std::filesystem::path asset;
   bool validation = false;
   bool selfTest = false;
   bool saveRaw = false;
@@ -39,7 +43,7 @@ Arguments parseArguments(int argc, char** argv) {
     if (argument == "--self-test") { arguments.selfTest = true; continue; }
     if (argument == "--save-raw") { arguments.saveRaw = true; continue; }
     if (argument != "--width" && argument != "--height" && argument != "--samples" &&
-        argument != "--bounces" && argument != "--output" && argument != "--dlss" && argument != "--dlss-preset")
+        argument != "--bounces" && argument != "--output" && argument != "--dlss" && argument != "--dlss-preset" && argument != "--asset")
       throw std::invalid_argument("Unknown option: " + std::string(argument));
     if (++i == argc) throw std::invalid_argument("Missing value after " + std::string(argument));
     const std::string_view value = argv[i];
@@ -55,6 +59,8 @@ Arguments parseArguments(int argc, char** argv) {
       else if(value == "d") arguments.dlss.preset = caustra::DlssPreset::D;
       else if(value == "e") arguments.dlss.preset = caustra::DlssPreset::E;
       else throw std::invalid_argument("--dlss-preset requires default, d or e.");
+    } else if(argument == "--asset") {
+      arguments.asset=std::filesystem::path(argv[i]);
     } else if (argument == "--output") {
       if (value.empty()) throw std::invalid_argument("--output must not be empty.");
       arguments.output = std::filesystem::path(argv[i]);
@@ -76,12 +82,13 @@ void printHelp() {
             << "  --dlss-preset P RR model preset: default/d/e (default default)\n"
             << "  --save-raw      Also save progressive raw HDR at internal resolution\n"
             << "  --output PATH   Output stem or .ppm/.pfm path (default render)\n"
+            << "  --asset PATH    Render a compiled Blender USD/MaterialX .caustra asset\n"
             << "  --validation    Enable Vulkan validation layer; fail if unavailable\n"
             << "  --self-test     Check dimensions, accumulation, finite/nonblack HDR\n"
             << "  --help, -h      Show this help\n\n"
             << "Always writes PATH.ppm (Reinhard + sRGB) and PATH.pfm (linear HDR).\n"
             << "With DLSS, each sample advances one noisy 1-spp temporal frame.\n"
-            << "The demo creates a Cornell room, area light, metal sphere, and box\n"
+            << "By default, the demo creates a Cornell room, area light, metal sphere, and box\n"
             << "in C++; no model files, textures, window, or display server required.\n";
 }
 void verifyImage(const caustra::Image& image, const Arguments& arguments, const caustra::Renderer& renderer) {
@@ -109,8 +116,15 @@ int main(int argc, char** argv) {
     auto arguments = parseArguments(argc, argv);
     if (arguments.help) { printHelp(); return 0; }
     caustra::validateSettings(arguments.settings);
-    const auto scene = caustra::example::makeDemoScene();
-    const auto camera = caustra::example::makeDemoCamera();
+    auto scene = caustra::example::makeDemoScene();
+    auto camera = caustra::example::makeDemoCamera();
+    if(!arguments.asset.empty()) {
+#if CAUSTRA_HAS_ASSETS
+      auto asset=caustra::loadAsset(arguments.asset);scene=std::move(asset.scene);camera=asset.camera;
+#else
+      throw std::runtime_error("Asset reader disabled. Build with CAUSTRA_BUILD_ASSETS=ON.");
+#endif
+    }
     caustra::validateScene(scene);
     caustra::validateCamera(camera);
     auto stem = arguments.output;

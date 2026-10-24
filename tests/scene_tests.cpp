@@ -107,6 +107,106 @@ void testCameraAndSettings() {
   settings = {}; settings.environment.w = std::numeric_limits<float>::quiet_NaN();
   invalid([&] { caustra::validateSettings(settings); }, "nonfinite environment");
 }
+void testMaterialPrograms() {
+  using namespace caustra;
+  auto scene=triangleScene();
+  scene.textures.push_back({1,1,{{1,0.2f,0.1f,1}}});
+  scene.materialInstructions={
+    {{uint32_t(MaterialOp::Texcoord),0,0,0},{}},
+    {{uint32_t(MaterialOp::Image),0,0,5},{}},
+    {{uint32_t(MaterialOp::Output),1,uint32_t(MaterialParameter::BaseColor),0},{}}};
+  scene.materials[0].program={0,3,1,0};
+  validateScene(scene);
+  for(const auto& mutate:std::initializer_list<std::function<void(Scene&)>>{
+    [](auto& s){s.materials[0].program.y=129;},
+    [](auto& s){s.materials[0].program.x=3;},
+    [](auto& s){s.materials[0].program.z=6;},
+    [](auto& s){s.materialInstructions[1].code.y=1;},
+    [](auto& s){s.materialInstructions[1].code.z=1;},
+    [](auto& s){s.materialInstructions[1].code.w=32;},
+    [](auto& s){s.materialInstructions[1].code.x=999;},
+    [](auto& s){s.materialInstructions[2].code.z=99;},
+    [](auto& s){s.materialInstructions[0].value.x=std::numeric_limits<float>::quiet_NaN();},
+    [](auto& s){s.textures[0].pixels.clear();},
+    [](auto& s){s.textures[0].pixels[0].y=std::numeric_limits<float>::infinity();},
+    [](auto& s){s.meshes[0].vertices[0].texcoord.y=std::numeric_limits<float>::infinity();},
+    [](auto& s){s.materials[0].specular.y=0;},
+    [](auto& s){s.materials[0].coat.w=2;},
+    [](auto& s){s.materials[0].transmission.x=2;},
+    [](auto& s){s.materials[0].transmission.y=-1;},
+    [](auto& s){s.materials[0].transmission.z=2;},
+    [](auto& s){s.materials[0].transmission.w=-2;},
+    [](auto& s){s.materials[0].subsurface.x=-1;},
+    [](auto& s){s.materials[0].subsurface.y=-1;},
+    [](auto& s){s.materials[0].subsurface.w=0.5f;},
+    [](auto& s){s.materials[0].subsurfaceRadius.z=-1;},
+    [](auto& s){s.materials[0].thinFilm.y=-1;},
+    [](auto& s){s.materials[0].thinFilm.z=0;},
+    [](auto& s){s.materials[0].thinFilm.w=-1;},
+    [](auto& s){s.materials[0].fuzz.x=2;},
+    [](auto& s){s.materials[0].fuzzColor.x=-1;},
+    [](auto& s){s.materials[0].volume.x=-1;},
+    [](auto& s){s.materials[0].volume.y=2;},
+    [](auto& s){s.materials[0].volume.z=2;},
+    [](auto& s){s.materials[0].volumeAbsorption.x=-1;},
+    [](auto& s){s.materials[0].volumeScattering.z=-1;},
+    [](auto& s){s.materials[0].volumeEmission.y=std::numeric_limits<float>::infinity();},
+    [](auto& s){s.materials[0].transmission.x=1;s.materials[0].factors.z=0.5f;},
+    [](auto& s){s.materials[0].volume.x=1;s.materialInstructions[2].code.z=uint32_t(MaterialParameter::Opacity);},
+    [](auto& s){s.materials[0].volume.x=1;s.materialInstructions[2].code.z=uint32_t(MaterialParameter::VolumeAbsorption);}
+  }) {
+    auto broken=scene;mutate(broken);
+    invalid([&]{validateScene(broken);},"invalid material program or texture");
+  }
+  scene.materials[0].transmission={1,0.25f,-0.8f,-0.5f};
+  scene.materials[0].subsurface={0.5f,0.02f,0.8f,0};
+  scene.materials[0].thinFilm={0.5f,500,1.4f,1.0f/20};
+  scene.materials[0].fuzz={0.5f,0.5f,0.3f,0.5f};
+  scene.materials[0].volume={1,0.8f,0,0.5f};
+  scene.materials[0].volumeAbsorption={0.1f,0.2f,0.3f,0};
+  validateScene(scene);
+  {
+    auto controlled=triangleScene();
+    auto& material=controlled.materials[0];material.program={0,4,1,0};
+    material.transmission.x=1;material.subsurface.w=1;
+    controlled.materialInstructions={
+      {{uint32_t(MaterialOp::Texcoord),0,0,0},{}},
+      {{uint32_t(MaterialOp::Output),0,uint32_t(MaterialParameter::SpecularIOR),0},{}},
+      {{uint32_t(MaterialOp::Constant),0,0,0},{}},
+      {{uint32_t(MaterialOp::Output),2,uint32_t(MaterialParameter::ThinWalled),0},{}}};
+    invalid([&]{validateScene(controlled);},"A graph changing thin-walled to solid must reject spatial interior IOR");
+    material.program.w=1;
+    invalid([&]{validateScene(controlled);},"A heterogeneous flag must not permit spatial interior IOR");
+    material.program.w=0;
+    material.transmission.x=0;material.subsurface.x=1;
+    invalid([&]{validateScene(controlled);},"A graph creating solid SSS must reject spatial interior IOR");
+    material.subsurface.x=0;material.transmission.x=1;
+    controlled.materialInstructions[2].value.x=1;
+    validateScene(controlled); // A final literal thin flag keeps spatial surface IOR legal.
+    material.subsurface.w=0;validateScene(controlled); // Final graph value overrides the POD flag.
+    controlled.materialInstructions[1].code.z=uint32_t(MaterialParameter::BaseColor);
+    controlled.materialInstructions[2].value.x=0;material.subsurface.w=1;material.factors.z=.5f;
+    invalid([&]{validateScene(controlled);},"A graph creating a solid must also enforce full boundary coverage");
+    material.factors.z=1;validateScene(controlled); // Uniform solid interior with textured surface color.
+    material.program.y=2;controlled.materialInstructions[1].code.z=uint32_t(MaterialParameter::SpecularIOR);
+    validateScene(controlled); // POD thin flag, with no override, still permits spatial surface IOR.
+  }
+  {
+    auto mapped=triangleScene();mapped.materials[0].program={0,4,0,0};
+    mapped.materialInstructions={
+      {{uint32_t(MaterialOp::Constant),0,0,0},{.5f,.5f,1,0}},
+      {{uint32_t(MaterialOp::Constant),0,0,0},{1,1,1,1}},
+      {{uint32_t(MaterialOp::Normalmap),0,1,0},{}},
+      {{uint32_t(MaterialOp::Output),2,uint32_t(MaterialParameter::Normal),0},{}}};
+    validateScene(mapped); // Constant tangent-space normals are valid surface inputs.
+    mapped.materials[0].volume.x=1;
+    mapped.materialInstructions[3].code.z=uint32_t(MaterialParameter::VolumeAbsorption);
+    invalid([&]{validateScene(mapped);},"Constant normalmap inputs still create spatially varying volume coefficients");
+    mapped.materials[0].volume.x=0;mapped.materials[0].subsurface.x=1;
+    mapped.materialInstructions[3].code.z=uint32_t(MaterialParameter::SubsurfaceColor);
+    invalid([&]{validateScene(mapped);},"Constant normalmap inputs still create spatially varying SSS calibration");
+  }
+}
 void testImage() {
   const auto unique = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
   const auto folder = std::filesystem::temp_directory_path() / ("caustra-tests-" + unique);
@@ -154,6 +254,7 @@ int main() {
   try {
     testScene();
     testCameraAndSettings();
+    testMaterialPrograms();
     testImage();
     std::cout << "CPU scene/image tests passed (" << checks << " checks).\n";
     return 0;

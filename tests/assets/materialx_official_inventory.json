@@ -1,0 +1,615 @@
+{
+  "schema_version": 1,
+  "upstream": {
+    "repository": "https://github.com/AcademySoftwareFoundation/MaterialX",
+    "tag": "v1.39.5",
+    "commit": "7b64921ef1d42f2d57871e9d2c43dc11f041f26b",
+    "archive_sha256": "830b33e96069a69440df175d8ab0951b292893030d825235fbb3b3f846604dda",
+    "examples_directory": "resources/Materials/Examples"
+  },
+  "counts": {
+    "files": 50,
+    "entries": 66,
+    "unique_source_identities": 62
+  },
+  "files": [
+    {
+      "path": "DisneyPrincipled/disney_principled_carpaint.mtlx",
+      "sha256": "4dadbc91b92eb49ab6d4efd648dc49e4048c1fa72446b189bfdf2cc9532694ad"
+    },
+    {
+      "path": "DisneyPrincipled/disney_principled_default.mtlx",
+      "sha256": "a940cce92af113a2e9f7a09d784a27e2b27c2d5793c2577ef18561aabe457cf5"
+    },
+    {
+      "path": "DisneyPrincipled/disney_principled_glass.mtlx",
+      "sha256": "15e3c4e5ab8bffe2b480d8347f5d74bb0bfb23714288b9bef4c216105629750a"
+    },
+    {
+      "path": "DisneyPrincipled/disney_principled_gold.mtlx",
+      "sha256": "b9f8db64815e708cdea06c11ef1c756e6ecb3154b177a9b27309bef4275d3f6c"
+    },
+    {
+      "path": "DisneyPrincipled/disney_principled_plastic.mtlx",
+      "sha256": "3083b09033f50ee4d72ac50240b8af839dae4377b4bf36c3418d7f1068bb24d0"
+    },
+    {
+      "path": "GltfPbr/gltf_pbr_boombox.mtlx",
+      "sha256": "fe380bfe69237c621bda8e5589f2e87c921802f53bcf10b76246ab9be2583394"
+    },
+    {
+      "path": "GltfPbr/gltf_pbr_carpaint.mtlx",
+      "sha256": "774d7044872f7d702ed716608fb042117a4a2064431e504403f6c094c495a5b5"
+    },
+    {
+      "path": "GltfPbr/gltf_pbr_default.mtlx",
+      "sha256": "999b1312f4829beaa6f6e3943b0c0cfee9f522fcb0724926b67e5ed57be599cd"
+    },
+    {
+      "path": "GltfPbr/gltf_pbr_glass.mtlx",
+      "sha256": "af828f7da1f680b9b14beeab70e3f0ece2e8a2cbe07f6f7cbe7c78b1e2359490"
+    },
+    {
+      "path": "GltfPbr/gltf_pbr_gold.mtlx",
+      "sha256": "ab938d609b7f432c5a6535ebb295e001790772faa8fa3d4d6fda8e47f3a81e9e"
+    },
+    {
+      "path": "GltfPbr/gltf_pbr_plastic.mtlx",
+      "sha256": "33166af41bde8445a7d1b9c9528636286537e6216b00d83c9e544359b096db60"
+    },
+    {
+      "path": "OpenPbr/open_pbr_aluminum_brushed.mtlx",
+      "sha256": "22218d86ac1ba7680032a71bc1d3a6a685096764b12f1e74dee2aee8c0c58cb9"
+    },
+    {
+      "path": "OpenPbr/open_pbr_carpaint.mtlx",
+      "sha256": "d4bd983578344a9fbe2de51e7813ee46f33d830d68bbeb2e0b9e4893abf876cf"
+    },
+    {
+      "path": "OpenPbr/open_pbr_default.mtlx",
+      "sha256": "0b111f05685d2c82e17d63713c6d3dbdb729b6f68a015ecb5cc828811d765b76"
+    },
+    {
+      "path": "OpenPbr/open_pbr_glass.mtlx",
+      "sha256": "f7e302bf6bb09f59a6658e599144edc6130b12f3bf0b942ef644d616782b776c"
+    },
+    {
+      "path": "OpenPbr/open_pbr_honey.mtlx",
+      "sha256": "f3c815f7cb2cd11e98ea1a223975106d4412b885726eaf84acb86ac1dc7ffdf0"
+    },
+    {
+      "path": "OpenPbr/open_pbr_ketchup.mtlx",
+      "sha256": "b2d8e7c61cde782a5ca1612b26175dff5c220485596ab66aa4310a9a6de2bbfe"
+    },
+    {
+      "path": "OpenPbr/open_pbr_lightbulb.mtlx",
+      "sha256": "aa574a5f04e0ec2ad37761705f83f09dafe88f63eb17f1023f0892773075cf13"
+    },
+    {
+      "path": "OpenPbr/open_pbr_pearl.mtlx",
+      "sha256": "917e51c8071a6cfecc8f0048768479415cf525a8c16a658a68842657a0189e17"
+    },
+    {
+      "path": "OpenPbr/open_pbr_soapbubble.mtlx",
+      "sha256": "6f6cf149e6695de5298bf81bd891f64e3ba1a8a3e8872309a09b77826a11dc64"
+    },
+    {
+      "path": "OpenPbr/open_pbr_velvet.mtlx",
+      "sha256": "937fc30ad0817afd1ed707be09d18730b53d98bb0adc46cb5942ba0432f4e9a9"
+    },
+    {
+      "path": "SimpleHair/simple_hair_default.mtlx",
+      "sha256": "f1df06b3160076d9e94e5dd23ef0f1c0f8f5267c61dc6e49a3c2409796a5454d"
+    },
+    {
+      "path": "StandardSurface/standard_surface_brass_tiled.mtlx",
+      "sha256": "3ba391bed171adf7fd57d89b5c7b1e5aea327fd7f852117ed321dca7ac6f8b7a"
+    },
+    {
+      "path": "StandardSurface/standard_surface_brick_procedural.mtlx",
+      "sha256": "7b1522978a4892797ba6f4ccc7f7bbb5f3e758d146a5a79da92dc7e1ec676c4d"
+    },
+    {
+      "path": "StandardSurface/standard_surface_carpaint.mtlx",
+      "sha256": "84edf9a9cd8c8c1bd0c8f2cc5e5b29ea5510036343230e711a2aa3c95489fce7"
+    },
+    {
+      "path": "StandardSurface/standard_surface_chess_set.mtlx",
+      "sha256": "feb15090764a2771948d78452f84dba273d8a7bb1e4f9e83fa6d8346194d272f"
+    },
+    {
+      "path": "StandardSurface/standard_surface_chrome.mtlx",
+      "sha256": "63305516d30abb05a189a61b7eaafe2305cdfe95f74d12983b301b54d27d704f"
+    },
+    {
+      "path": "StandardSurface/standard_surface_copper.mtlx",
+      "sha256": "edb2a1664a9be04a1a087b1fca97c593ce3a7a2eea81fba14fc16e0cf65d12bd"
+    },
+    {
+      "path": "StandardSurface/standard_surface_default.mtlx",
+      "sha256": "44e718216bf2c35d4c92bf3e1d63b3df66331470bb0ffbce13540ec8ac983c32"
+    },
+    {
+      "path": "StandardSurface/standard_surface_glass.mtlx",
+      "sha256": "a11f7017191f926b45e31ff67cd6acd9633a79b94d0a426f8c654608f078574a"
+    },
+    {
+      "path": "StandardSurface/standard_surface_glass_tinted.mtlx",
+      "sha256": "50b375223505f04e3d1ac19221d69986cc8e533df7c1522ff617dbb446ab2dd5"
+    },
+    {
+      "path": "StandardSurface/standard_surface_gold.mtlx",
+      "sha256": "86c5831e168fab275dd4c1a22e79a82e486c2dde085a7fbcb0d7e6763448eabb"
+    },
+    {
+      "path": "StandardSurface/standard_surface_greysphere.mtlx",
+      "sha256": "f731493d224616d01fe958b45f3da560e9312247848f6788d088fa3118f084ee"
+    },
+    {
+      "path": "StandardSurface/standard_surface_greysphere_calibration.mtlx",
+      "sha256": "a1904bf9bcf98dde83181c7c69456e294db708692639fce7ee8542fb60a547ca"
+    },
+    {
+      "path": "StandardSurface/standard_surface_jade.mtlx",
+      "sha256": "1a9aa2fa929a6af44e985ab942c73645987ca83c4a3af1bad9dd7f2a9197661b"
+    },
+    {
+      "path": "StandardSurface/standard_surface_look_brass_tiled.mtlx",
+      "sha256": "6b5beb5a79b8f9670c8746b9b894d87e516fea9d8c7a3c6b0d838ce1c75bbf76"
+    },
+    {
+      "path": "StandardSurface/standard_surface_look_wood_tiled.mtlx",
+      "sha256": "5ab3e5e4d0dd554f37c4e5a60a393fff6fa338a7c350c72d86257babf7bd128a"
+    },
+    {
+      "path": "StandardSurface/standard_surface_marble_solid.mtlx",
+      "sha256": "d62fb00987985345f6edb80279c58d53199f09927a8f3937da1f994e5be21c6c"
+    },
+    {
+      "path": "StandardSurface/standard_surface_metal_brushed.mtlx",
+      "sha256": "03c0a45c86c1aebd8a59fcecdc8985c4983f54224c3ac161ca88ce638571ee38"
+    },
+    {
+      "path": "StandardSurface/standard_surface_onyx_hextiled.mtlx",
+      "sha256": "cbfd9e19ff36334a1a01579d738c943c72cc9c2abdb18ae52b99a7ac0bada248"
+    },
+    {
+      "path": "StandardSurface/standard_surface_plastic.mtlx",
+      "sha256": "5803e4dff56a5f1a99b28b5219389b358fa67fb8d39ed81ba0ae6c3e57bf5e9d"
+    },
+    {
+      "path": "StandardSurface/standard_surface_thin_film.mtlx",
+      "sha256": "4fa21e4ac797fdbcb78fb84b9de08c570097fb83b403e51deebf21de963c1f39"
+    },
+    {
+      "path": "StandardSurface/standard_surface_velvet.mtlx",
+      "sha256": "29ebadf656f1d193440b609a907bf533101b3ea5c0354c703db65bb67dc73ac7"
+    },
+    {
+      "path": "StandardSurface/standard_surface_wood_tiled.mtlx",
+      "sha256": "93e826aa7af07453d6ce03ab57b9e12c6649cb444f3eb924d4dec76353cc57a0"
+    },
+    {
+      "path": "UsdPreviewSurface/usd_preview_surface_brass_tiled.mtlx",
+      "sha256": "8f1fe3a5c0437108f6765dfdb306f24ff3bfca52d11de418bd29e4967dcef15d"
+    },
+    {
+      "path": "UsdPreviewSurface/usd_preview_surface_carpaint.mtlx",
+      "sha256": "126182e0d13546d1167d05927ddb6499574ef917a50434e8705f4e905a5bf485"
+    },
+    {
+      "path": "UsdPreviewSurface/usd_preview_surface_default.mtlx",
+      "sha256": "d5117d5648b073c7b3cbf876a8b9bf213b9097b958e5d2d997f5cdd09848a77f"
+    },
+    {
+      "path": "UsdPreviewSurface/usd_preview_surface_glass.mtlx",
+      "sha256": "86d390e40bc82d7957b6c62f459ee7b5bd6cd635a4f6c55be2c9ca543e828eb1"
+    },
+    {
+      "path": "UsdPreviewSurface/usd_preview_surface_gold.mtlx",
+      "sha256": "e5cf64c0edbfae26f14973943adb18703a80cd914a123ad35409beccf0f405fc"
+    },
+    {
+      "path": "UsdPreviewSurface/usd_preview_surface_plastic.mtlx",
+      "sha256": "4a219f136a35e94dd13309c8a196dac2df3962f8de74e99e62a68ac3e5301225"
+    }
+  ],
+  "entries": [
+    {
+      "source": "DisneyPrincipled/disney_principled_carpaint.mtlx",
+      "surface": "SR_carpaint",
+      "source_identity": "DisneyPrincipled/disney_principled_carpaint.mtlx#SR_carpaint",
+      "surface_category": "disney_principled"
+    },
+    {
+      "source": "DisneyPrincipled/disney_principled_default.mtlx",
+      "surface": "SR_default",
+      "source_identity": "DisneyPrincipled/disney_principled_default.mtlx#SR_default",
+      "surface_category": "disney_principled"
+    },
+    {
+      "source": "DisneyPrincipled/disney_principled_glass.mtlx",
+      "surface": "SR_glass",
+      "source_identity": "DisneyPrincipled/disney_principled_glass.mtlx#SR_glass",
+      "surface_category": "disney_principled"
+    },
+    {
+      "source": "DisneyPrincipled/disney_principled_gold.mtlx",
+      "surface": "SR_gold",
+      "source_identity": "DisneyPrincipled/disney_principled_gold.mtlx#SR_gold",
+      "surface_category": "disney_principled"
+    },
+    {
+      "source": "DisneyPrincipled/disney_principled_plastic.mtlx",
+      "surface": "SR_plastic",
+      "source_identity": "DisneyPrincipled/disney_principled_plastic.mtlx#SR_plastic",
+      "surface_category": "disney_principled"
+    },
+    {
+      "source": "GltfPbr/gltf_pbr_boombox.mtlx",
+      "surface": "SR_boombox",
+      "source_identity": "GltfPbr/gltf_pbr_boombox.mtlx#SR_boombox",
+      "surface_category": "gltf_pbr"
+    },
+    {
+      "source": "GltfPbr/gltf_pbr_carpaint.mtlx",
+      "surface": "SR_carpaint",
+      "source_identity": "GltfPbr/gltf_pbr_carpaint.mtlx#SR_carpaint",
+      "surface_category": "gltf_pbr"
+    },
+    {
+      "source": "GltfPbr/gltf_pbr_default.mtlx",
+      "surface": "SR_default",
+      "source_identity": "GltfPbr/gltf_pbr_default.mtlx#SR_default",
+      "surface_category": "gltf_pbr"
+    },
+    {
+      "source": "GltfPbr/gltf_pbr_glass.mtlx",
+      "surface": "SR_glass",
+      "source_identity": "GltfPbr/gltf_pbr_glass.mtlx#SR_glass",
+      "surface_category": "gltf_pbr"
+    },
+    {
+      "source": "GltfPbr/gltf_pbr_gold.mtlx",
+      "surface": "SR_gold",
+      "source_identity": "GltfPbr/gltf_pbr_gold.mtlx#SR_gold",
+      "surface_category": "gltf_pbr"
+    },
+    {
+      "source": "GltfPbr/gltf_pbr_plastic.mtlx",
+      "surface": "SR_plastic",
+      "source_identity": "GltfPbr/gltf_pbr_plastic.mtlx#SR_plastic",
+      "surface_category": "gltf_pbr"
+    },
+    {
+      "source": "OpenPbr/open_pbr_aluminum_brushed.mtlx",
+      "surface": "open_pbr_surface_surfaceshader",
+      "source_identity": "OpenPbr/open_pbr_aluminum_brushed.mtlx#open_pbr_surface_surfaceshader",
+      "surface_category": "open_pbr_surface"
+    },
+    {
+      "source": "OpenPbr/open_pbr_carpaint.mtlx",
+      "surface": "open_pbr_surface_surfaceshader",
+      "source_identity": "OpenPbr/open_pbr_carpaint.mtlx#open_pbr_surface_surfaceshader",
+      "surface_category": "open_pbr_surface"
+    },
+    {
+      "source": "OpenPbr/open_pbr_default.mtlx",
+      "surface": "open_pbr_surface_surfaceshader",
+      "source_identity": "OpenPbr/open_pbr_default.mtlx#open_pbr_surface_surfaceshader",
+      "surface_category": "open_pbr_surface"
+    },
+    {
+      "source": "OpenPbr/open_pbr_glass.mtlx",
+      "surface": "open_pbr_surface_surfaceshader",
+      "source_identity": "OpenPbr/open_pbr_glass.mtlx#open_pbr_surface_surfaceshader",
+      "surface_category": "open_pbr_surface"
+    },
+    {
+      "source": "OpenPbr/open_pbr_honey.mtlx",
+      "surface": "open_pbr_surface_surfaceshader",
+      "source_identity": "OpenPbr/open_pbr_honey.mtlx#open_pbr_surface_surfaceshader",
+      "surface_category": "open_pbr_surface"
+    },
+    {
+      "source": "OpenPbr/open_pbr_ketchup.mtlx",
+      "surface": "open_pbr_surface_surfaceshader",
+      "source_identity": "OpenPbr/open_pbr_ketchup.mtlx#open_pbr_surface_surfaceshader",
+      "surface_category": "open_pbr_surface"
+    },
+    {
+      "source": "OpenPbr/open_pbr_lightbulb.mtlx",
+      "surface": "open_pbr_surface_surfaceshader",
+      "source_identity": "OpenPbr/open_pbr_lightbulb.mtlx#open_pbr_surface_surfaceshader",
+      "surface_category": "open_pbr_surface"
+    },
+    {
+      "source": "OpenPbr/open_pbr_pearl.mtlx",
+      "surface": "open_pbr_surface_surfaceshader",
+      "source_identity": "OpenPbr/open_pbr_pearl.mtlx#open_pbr_surface_surfaceshader",
+      "surface_category": "open_pbr_surface"
+    },
+    {
+      "source": "OpenPbr/open_pbr_soapbubble.mtlx",
+      "surface": "open_pbr_surface_surfaceshader",
+      "source_identity": "OpenPbr/open_pbr_soapbubble.mtlx#open_pbr_surface_surfaceshader",
+      "surface_category": "open_pbr_surface"
+    },
+    {
+      "source": "OpenPbr/open_pbr_velvet.mtlx",
+      "surface": "open_pbr_surface_surfaceshader",
+      "source_identity": "OpenPbr/open_pbr_velvet.mtlx#open_pbr_surface_surfaceshader",
+      "surface_category": "open_pbr_surface"
+    },
+    {
+      "source": "SimpleHair/simple_hair_default.mtlx",
+      "surface": "SR_default",
+      "source_identity": "SimpleHair/simple_hair_default.mtlx#SR_default",
+      "surface_category": "simple_hair"
+    },
+    {
+      "source": "StandardSurface/standard_surface_brass_tiled.mtlx",
+      "surface": "SR_brass1",
+      "source_identity": "StandardSurface/standard_surface_brass_tiled.mtlx#SR_brass1",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_brick_procedural.mtlx",
+      "surface": "N_StandardSurface",
+      "source_identity": "StandardSurface/standard_surface_brick_procedural.mtlx#N_StandardSurface",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_carpaint.mtlx",
+      "surface": "SR_carpaint",
+      "source_identity": "StandardSurface/standard_surface_carpaint.mtlx#SR_carpaint",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_chess_set.mtlx",
+      "surface": "Bishop_B",
+      "source_identity": "StandardSurface/standard_surface_chess_set.mtlx#Bishop_B",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_chess_set.mtlx",
+      "surface": "Bishop_W",
+      "source_identity": "StandardSurface/standard_surface_chess_set.mtlx#Bishop_W",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_chess_set.mtlx",
+      "surface": "Castle_B",
+      "source_identity": "StandardSurface/standard_surface_chess_set.mtlx#Castle_B",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_chess_set.mtlx",
+      "surface": "Castle_W",
+      "source_identity": "StandardSurface/standard_surface_chess_set.mtlx#Castle_W",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_chess_set.mtlx",
+      "surface": "Chessboard",
+      "source_identity": "StandardSurface/standard_surface_chess_set.mtlx#Chessboard",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_chess_set.mtlx",
+      "surface": "King_B",
+      "source_identity": "StandardSurface/standard_surface_chess_set.mtlx#King_B",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_chess_set.mtlx",
+      "surface": "King_W",
+      "source_identity": "StandardSurface/standard_surface_chess_set.mtlx#King_W",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_chess_set.mtlx",
+      "surface": "Knight_B",
+      "source_identity": "StandardSurface/standard_surface_chess_set.mtlx#Knight_B",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_chess_set.mtlx",
+      "surface": "Knight_W",
+      "source_identity": "StandardSurface/standard_surface_chess_set.mtlx#Knight_W",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_chess_set.mtlx",
+      "surface": "Pawn_Body_B",
+      "source_identity": "StandardSurface/standard_surface_chess_set.mtlx#Pawn_Body_B",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_chess_set.mtlx",
+      "surface": "Pawn_Body_W",
+      "source_identity": "StandardSurface/standard_surface_chess_set.mtlx#Pawn_Body_W",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_chess_set.mtlx",
+      "surface": "Pawn_Top_B",
+      "source_identity": "StandardSurface/standard_surface_chess_set.mtlx#Pawn_Top_B",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_chess_set.mtlx",
+      "surface": "Pawn_Top_W",
+      "source_identity": "StandardSurface/standard_surface_chess_set.mtlx#Pawn_Top_W",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_chess_set.mtlx",
+      "surface": "Queen_B",
+      "source_identity": "StandardSurface/standard_surface_chess_set.mtlx#Queen_B",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_chess_set.mtlx",
+      "surface": "Queen_W",
+      "source_identity": "StandardSurface/standard_surface_chess_set.mtlx#Queen_W",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_chrome.mtlx",
+      "surface": "SR_chrome",
+      "source_identity": "StandardSurface/standard_surface_chrome.mtlx#SR_chrome",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_copper.mtlx",
+      "surface": "SR_copper",
+      "source_identity": "StandardSurface/standard_surface_copper.mtlx#SR_copper",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_default.mtlx",
+      "surface": "SR_default",
+      "source_identity": "StandardSurface/standard_surface_default.mtlx#SR_default",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_glass.mtlx",
+      "surface": "SR_glass",
+      "source_identity": "StandardSurface/standard_surface_glass.mtlx#SR_glass",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_glass_tinted.mtlx",
+      "surface": "SR_glass_tinted",
+      "source_identity": "StandardSurface/standard_surface_glass_tinted.mtlx#SR_glass_tinted",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_gold.mtlx",
+      "surface": "SR_gold",
+      "source_identity": "StandardSurface/standard_surface_gold.mtlx#SR_gold",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_greysphere.mtlx",
+      "surface": "SR_greysphere",
+      "source_identity": "StandardSurface/standard_surface_greysphere.mtlx#SR_greysphere",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_greysphere_calibration.mtlx",
+      "surface": "SR_Greysphere_Calibration",
+      "source_identity": "StandardSurface/standard_surface_greysphere_calibration.mtlx#SR_Greysphere_Calibration",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_jade.mtlx",
+      "surface": "SR_jade",
+      "source_identity": "StandardSurface/standard_surface_jade.mtlx#SR_jade",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_look_brass_tiled.mtlx",
+      "surface": "SR_brass1",
+      "source_identity": "StandardSurface/standard_surface_brass_tiled.mtlx#SR_brass1",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_look_brass_tiled.mtlx",
+      "surface": "SR_Greysphere_Calibration",
+      "source_identity": "StandardSurface/standard_surface_greysphere_calibration.mtlx#SR_Greysphere_Calibration",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_look_wood_tiled.mtlx",
+      "surface": "SR_wood1",
+      "source_identity": "StandardSurface/standard_surface_wood_tiled.mtlx#SR_wood1",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_look_wood_tiled.mtlx",
+      "surface": "SR_Greysphere_Calibration",
+      "source_identity": "StandardSurface/standard_surface_greysphere_calibration.mtlx#SR_Greysphere_Calibration",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_marble_solid.mtlx",
+      "surface": "SR_marble1",
+      "source_identity": "StandardSurface/standard_surface_marble_solid.mtlx#SR_marble1",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_metal_brushed.mtlx",
+      "surface": "SR_metal_brushed",
+      "source_identity": "StandardSurface/standard_surface_metal_brushed.mtlx#SR_metal_brushed",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_onyx_hextiled.mtlx",
+      "surface": "N_StandardSurface",
+      "source_identity": "StandardSurface/standard_surface_onyx_hextiled.mtlx#N_StandardSurface",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_plastic.mtlx",
+      "surface": "SR_plastic",
+      "source_identity": "StandardSurface/standard_surface_plastic.mtlx#SR_plastic",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_thin_film.mtlx",
+      "surface": "SR_thin_film",
+      "source_identity": "StandardSurface/standard_surface_thin_film.mtlx#SR_thin_film",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_velvet.mtlx",
+      "surface": "SR_velvet",
+      "source_identity": "StandardSurface/standard_surface_velvet.mtlx#SR_velvet",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "StandardSurface/standard_surface_wood_tiled.mtlx",
+      "surface": "SR_wood1",
+      "source_identity": "StandardSurface/standard_surface_wood_tiled.mtlx#SR_wood1",
+      "surface_category": "standard_surface"
+    },
+    {
+      "source": "UsdPreviewSurface/usd_preview_surface_brass_tiled.mtlx",
+      "surface": "SR_brass1",
+      "source_identity": "UsdPreviewSurface/usd_preview_surface_brass_tiled.mtlx#SR_brass1",
+      "surface_category": "UsdPreviewSurface"
+    },
+    {
+      "source": "UsdPreviewSurface/usd_preview_surface_carpaint.mtlx",
+      "surface": "SR_carpaint",
+      "source_identity": "UsdPreviewSurface/usd_preview_surface_carpaint.mtlx#SR_carpaint",
+      "surface_category": "UsdPreviewSurface"
+    },
+    {
+      "source": "UsdPreviewSurface/usd_preview_surface_default.mtlx",
+      "surface": "SR_default",
+      "source_identity": "UsdPreviewSurface/usd_preview_surface_default.mtlx#SR_default",
+      "surface_category": "UsdPreviewSurface"
+    },
+    {
+      "source": "UsdPreviewSurface/usd_preview_surface_glass.mtlx",
+      "surface": "SR_glass",
+      "source_identity": "UsdPreviewSurface/usd_preview_surface_glass.mtlx#SR_glass",
+      "surface_category": "UsdPreviewSurface"
+    },
+    {
+      "source": "UsdPreviewSurface/usd_preview_surface_gold.mtlx",
+      "surface": "SR_gold",
+      "source_identity": "UsdPreviewSurface/usd_preview_surface_gold.mtlx#SR_gold",
+      "surface_category": "UsdPreviewSurface"
+    },
+    {
+      "source": "UsdPreviewSurface/usd_preview_surface_plastic.mtlx",
+      "surface": "SR_plastic",
+      "source_identity": "UsdPreviewSurface/usd_preview_surface_plastic.mtlx#SR_plastic",
+      "surface_category": "UsdPreviewSurface"
+    }
+  ]
+}

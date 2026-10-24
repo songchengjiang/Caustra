@@ -4,3 +4,5 @@
 *.pfm
 *.spv
 /.vs/
+__pycache__/
+*.pyc

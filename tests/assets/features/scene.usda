@@ -1,0 +1,89 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    subLayers = [
+        @blender_native.usdc@
+    ]
+    upAxis = "Z"
+)
+
+over "root"
+{
+    over "_materials"
+    {
+        over "Glass_ThinWalled_Material"
+        {
+            over "Principled_BSDF"
+            {
+                bool inputs:geometry_thin_walled = 1
+            }
+        }
+
+        over "Glass_Tinted_Material"
+        {
+            over "Principled_BSDF"
+            {
+                float inputs:transmission_depth = 0.7
+            }
+        }
+
+        over "Volume_Box_Material"
+        {
+            token outputs:mtlx:surface.connect = None
+            token outputs:mtlx:volume.connect = </root/_materials/Volume_Box_Material/caustra_volume.outputs:out>
+
+            def Shader "caustra_vdf"
+            {
+                uniform token info:id = "ND_anisotropic_vdf"
+                vector3f inputs:absorption = (0.15, 0.04, 0.02)
+                float inputs:anisotropy = 0.35
+                vector3f inputs:scattering = (0.55, 0.65, 0.8)
+                token outputs:out
+            }
+
+            def Shader "caustra_edf"
+            {
+                uniform token info:id = "ND_uniform_edf"
+                color3f inputs:color = (0.01, 0.015, 0.025)
+                token outputs:out
+            }
+
+            def Shader "caustra_volume"
+            {
+                uniform token info:id = "ND_volume"
+                token inputs:edf.connect = </root/_materials/Volume_Box_Material/caustra_edf.outputs:out>
+                token inputs:vdf.connect = </root/_materials/Volume_Box_Material/caustra_vdf.outputs:out>
+                token outputs:out
+            }
+        }
+
+        over "Displacement_Material"
+        {
+            token outputs:mtlx:displacement.connect = </root/_materials/Displacement_Material/caustra_displacement.outputs:out>
+
+            def Shader "caustra_position"
+            {
+                uniform token info:id = "ND_position_vector3"
+                string inputs:space = "object"
+                token outputs:out
+            }
+
+            def Shader "caustra_noise"
+            {
+                uniform token info:id = "ND_noise3d_float"
+                float inputs:amplitude = 0.4
+                float inputs:pivot = 0.1
+                vector3f inputs:position.connect = </root/_materials/Displacement_Material/caustra_position.outputs:out>
+                token outputs:out
+            }
+
+            def Shader "caustra_displacement"
+            {
+                uniform token info:id = "ND_displacement_float"
+                float inputs:displacement.connect = </root/_materials/Displacement_Material/caustra_noise.outputs:out>
+                token outputs:out
+            }
+        }
+    }
+}
+

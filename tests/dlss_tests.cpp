@@ -3,6 +3,8 @@
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
+#include <utility>
+#include <utility>
 
 void require(bool c,const char* message) { if(!c) throw std::runtime_error(message); }
 double energy(const caustra::Image& image) {
@@ -55,7 +57,25 @@ int main() {
     require(rejected && renderer.sampleCount()==beforeFailure,"Rejected RR dimensions must preserve current state");
     auto camera=caustra::example::makeDemoCamera(); camera.position.x+=0.2f; renderer.setCamera(camera);
     require(renderer.frameCount()==0,"Camera cut must discard RR history"); renderer.render(2); energy(renderer.readback());
-    render.width=384; render.height=256; renderer.setSettings(render); renderer.render(2); auto resized=renderer.readback(); energy(resized); require(resized.width==384 && resized.height==256,"RR resize failed");
+    dlss.quality=caustra::DlssQuality::Quality; dlss.preset=caustra::DlssPreset::E;
+    renderer.setDlssSettings(dlss); renderer.render(2);
+    auto previousRaw=renderer.readbackRaw();
+    uint32_t previousWidth=render.width,previousHeight=render.height;
+    // Rebuild both directions without changing quality: a stale output image or
+    // internal guide buffer must not survive a viewport resolution change.
+    for(const auto& dimensions:{std::pair{512u,384u},std::pair{256u,160u},std::pair{384u,256u}}) {
+      render.width=dimensions.first; render.height=dimensions.second;
+      renderer.setSettings(render);
+      require(renderer.sampleCount()==0 && renderer.frameCount()==0,"RR resize must reset accumulation and temporal history");
+      renderer.render(2);
+      auto resized=renderer.readback(); auto resizedRaw=renderer.readbackRaw();
+      energy(resized); energy(resizedRaw);
+      require(resized.width==render.width && resized.height==render.height && resized.samples==2,"RR resized output dimensions or sample counter");
+      require(resizedRaw.width>0 && resizedRaw.height>0 && resizedRaw.width<render.width && resizedRaw.height<render.height && resizedRaw.samples==2,"RR resized internal dimensions or sample counter");
+      require((render.width>previousWidth ? resizedRaw.width>previousRaw.width : resizedRaw.width<previousRaw.width) &&
+              (render.height>previousHeight ? resizedRaw.height>previousRaw.height : resizedRaw.height<previousRaw.height),"RR internal resolution did not follow output resize");
+      previousWidth=render.width; previousHeight=render.height; previousRaw=std::move(resizedRaw);
+    }
     dlss.enabled=false; renderer.setDlssSettings(dlss); renderer.render(2); auto disabled=renderer.readback(); auto disabledRaw=renderer.readbackRaw();
     require(disabled.pixels[123].x==disabledRaw.pixels[123].x,"Disabled RR must return raw output");
     for(auto mode:{caustra::DlssQuality::Native,caustra::DlssQuality::Quality,caustra::DlssQuality::Performance}) {
@@ -70,7 +90,7 @@ int main() {
       render.width+=16; renderer.setSettings(render); renderer.render(1); energy(renderer.readback());
     }
     require(renderer.validationErrorCount()==0,"Vulkan validation errors in DLSS integration");
-    std::cout<<"DLSS RR passed: native, quality/balanced/performance upscale, Default/D/E presets, moving-camera history, reset, camera cut, resize, invalid config and repeated off/on switching.\n";
+    std::cout<<"DLSS RR passed: native, quality/balanced/performance upscale, Default/D/E presets, moving-camera history, reset, camera cut, output/internal resize up and down, invalid config and repeated off/on switching.\n";
     return 0;
   } catch(const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }
 }

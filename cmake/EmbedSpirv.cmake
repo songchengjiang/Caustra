@@ -4,15 +4,9 @@ math(EXPR remainder "${hex_length} % 8")
 if(NOT remainder EQUAL 0)
   message(FATAL_ERROR "SPIR-V must contain complete 32-bit words")
 endif()
-set(source "#pragma once\n#include <cstdint>\ninline constexpr uint32_t pathtraceSpv[] = {\n")
-math(EXPR last "${hex_length} - 8")
-foreach(offset RANGE 0 ${last} 8)
-  string(SUBSTRING "${spirv}" ${offset} 8 word)
-  string(SUBSTRING "${word}" 0 2 b0)
-  string(SUBSTRING "${word}" 2 2 b1)
-  string(SUBSTRING "${word}" 4 2 b2)
-  string(SUBSTRING "${word}" 6 2 b3)
-  string(APPEND source "0x${b3}${b2}${b1}${b0},")
-endforeach()
-string(APPEND source "\n};\n")
-file(WRITE "${OUTPUT}" "${source}")
+# Convert all little-endian words in one native regex pass. A CMake foreach
+# repeatedly copies the growing source/hex strings and becomes quadratic for
+# the larger surface/volume integrator. Each generated line holds one word.
+string(REGEX REPLACE "([0-9a-f][0-9a-f])([0-9a-f][0-9a-f])([0-9a-f][0-9a-f])([0-9a-f][0-9a-f])"
+  "0x\\4\\3\\2\\1,\n" words "${spirv}")
+file(WRITE "${OUTPUT}" "#pragma once\n#include <cstdint>\ninline constexpr uint32_t pathtraceSpv[] = {\n${words}};\n")

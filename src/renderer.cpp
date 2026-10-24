@@ -14,7 +14,9 @@
 #include <cstring>
 #include <functional>
 #include <iostream>
+#include <iomanip>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -41,6 +43,9 @@ bool sameCamera(const Camera& a,const Camera& b) {
   const auto near3=[&](Float4 x,Float4 y) { return near(x.x,y.x) && near(x.y,y.y) && near(x.z,y.z); };
   return near3(a.position,b.position) && near3(a.target,b.target) && near3(a.up,b.up) && near(a.verticalFov,b.verticalFov);
 }
+bool sameCameraOrigin(const Camera& a,const Camera& b) {
+  return a.position.x==b.position.x && a.position.y==b.position.y && a.position.z==b.position.z;
+}
 float halton(uint32_t index,uint32_t base) {
   float value=0,weight=1;
   while(index) { weight/=base; value+=weight*(index%base); index/=base; }
@@ -50,15 +55,38 @@ Float4 transform(const Instance& i, Float4 p) {
   const auto& m=i.transform;
   return {m[0]*p.x+m[1]*p.y+m[2]*p.z+m[3],m[4]*p.x+m[5]*p.y+m[6]*p.z+m[7],m[8]*p.x+m[9]*p.y+m[10]*p.z+m[11],0};
 }
+Float4 transformNormal(const Instance& i, Float4 n) {
+  const auto& m=i.transform;
+  Float4 a{m[0],m[4],m[8],0}, b{m[1],m[5],m[9],0}, c{m[2],m[6],m[10],0};
+  auto x=cross(b,c), y=cross(c,a), z=cross(a,b);
+  const float determinant=a.x*x.x+a.y*x.y+a.z*x.z;
+  return {(x.x*n.x+y.x*n.y+z.x*n.z)/determinant,
+          (x.y*n.x+y.y*n.y+z.y*n.z)/determinant,
+          (x.z*n.x+y.z*n.y+z.z*n.z)/determinant,0};
+}
+float instanceOrientation(const Instance& i) {
+  const auto& m=i.transform;
+  const double determinant=double(m[0])*(double(m[5])*m[10]-double(m[6])*m[9])
+    -double(m[1])*(double(m[4])*m[10]-double(m[6])*m[8])+double(m[2])*(double(m[4])*m[9]-double(m[5])*m[8]);
+  return determinant<0?-1.0f:1.0f;
+}
+Float4 transformTangent(const Instance& i,Float4 tangent) {
+  const auto& m=i.transform;
+  return {m[0]*tangent.x+m[1]*tangent.y+m[2]*tangent.z,
+          m[4]*tangent.x+m[5]*tangent.y+m[6]*tangent.z,
+          m[8]*tangent.x+m[9]*tangent.y+m[10]*tangent.z,tangent.w*instanceOrientation(i)};
+}
 
+enum class BufferMemory { Device, Upload, Readback };
 struct Buffer {
   VkDevice device{}; VkBuffer handle{}; VkDeviceMemory memory{}; void* mapped{}; VkDeviceSize size{};
+  VkMemoryPropertyFlags memoryFlags{};
   Buffer() = default;
   Buffer(const Buffer&) = delete;
   Buffer& operator=(const Buffer&) = delete;
   Buffer(Buffer&& b) noexcept { *this=std::move(b); }
   Buffer& operator=(Buffer&& b) noexcept {
-    if(this != &b) { clear(); device=b.device; handle=std::exchange(b.handle,{}); memory=std::exchange(b.memory,{}); mapped=std::exchange(b.mapped,nullptr); size=b.size; }
+    if(this != &b) { clear(); device=b.device; handle=std::exchange(b.handle,{}); memory=std::exchange(b.memory,{}); mapped=std::exchange(b.mapped,nullptr); size=b.size; memoryFlags=b.memoryFlags; }
     return *this;
   }
   void clear() {
@@ -67,8 +95,21 @@ struct Buffer {
     if(memory) vkFreeMemory(device,memory,nullptr);
     mapped=nullptr; handle={}; memory={};
   }
+  void flush() const {
+    if(!mapped || (memoryFlags&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) return;
+    VkMappedMemoryRange range{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};
+    range.memory=memory; range.size=VK_WHOLE_SIZE;
+    check(vkFlushMappedMemoryRanges(device,1,&range),"Flush buffer memory");
+  }
+  void invalidate() const {
+    if(!mapped || (memoryFlags&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) return;
+    VkMappedMemoryRange range{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};
+    range.memory=memory; range.size=VK_WHOLE_SIZE;
+    check(vkInvalidateMappedMemoryRanges(device,1,&range),"Invalidate buffer memory");
+  }
   ~Buffer() { clear(); }
 };
+struct PendingUpload { Buffer staging; VkBuffer destination{}; };
 struct Acceleration {
   VkDevice device{}; VkAccelerationStructureKHR handle{};
   PFN_vkDestroyAccelerationStructureKHR destroy{};
@@ -86,9 +127,12 @@ struct Acceleration {
 };
 struct SceneResources {
   Buffer vertices, indices, instances, materials, lights;
+  Buffer materialInstructions, textureInfos, texturePixels, materialMediumTable;
   std::vector<Acceleration> blas;
   Acceleration tlas;
-  uint32_t lightCount=0; float totalArea=0;
+  uint32_t lightCount=0, materialInitX=0, materialInitY=0; float totalArea=0;
+  bool hasMedia=false, materialMediumDirty=true;
+  std::vector<uint32_t> heterogeneousInstances;
 };
 }
 
@@ -97,7 +141,7 @@ struct Renderer::Impl {
   VkPhysicalDevice physical{}; VkPhysicalDeviceProperties properties{};
   VkPhysicalDeviceMemoryProperties memoryProperties{};
   VkDevice device{}; VkQueue queue{}; uint32_t queueFamily=0;
-  VkCommandPool commandPool{}; VkFence fence{};
+  VkCommandPool commandPool{}; VkCommandBuffer commandBuffer{}; VkFence fence{};
   VkDescriptorSetLayout descriptorLayout{}; VkDescriptorPool descriptorPool{}; VkDescriptorSet descriptorSet{};
   VkPipelineLayout pipelineLayout{}; VkPipeline pipeline{};
   PFN_vkCreateAccelerationStructureKHR createAS{};
@@ -120,7 +164,8 @@ struct Renderer::Impl {
   std::unique_ptr<DlssBackend> denoiser;
 #endif
   std::unique_ptr<SceneResources> scene;
-  Buffer output, guides, denoisedOutput, cameraHistory;
+  Buffer output, guides, denoisedOutput, rawReadback, cameraHistory, renderErrors, cameraMediumCache;
+  bool rawReadbackCurrent=false, cameraMediumDirty=true;
 
   ~Impl() {
     if(device) vkDeviceWaitIdle(device);
@@ -128,7 +173,8 @@ struct Renderer::Impl {
     denoiser.reset();
     dlssSession.reset();
 #endif
-    scene.reset(); output.clear(); guides.clear(); denoisedOutput.clear(); cameraHistory.clear();
+    scene.reset(); output.clear(); guides.clear(); denoisedOutput.clear(); rawReadback.clear();
+    cameraHistory.clear(); renderErrors.clear(); cameraMediumCache.clear();
     if(pipeline) vkDestroyPipeline(device,pipeline,nullptr);
     if(pipelineLayout) vkDestroyPipelineLayout(device,pipelineLayout,nullptr);
     if(descriptorPool) vkDestroyDescriptorPool(device,descriptorPool,nullptr);
@@ -250,36 +296,82 @@ struct Renderer::Impl {
     LOAD_AS(cmdBuild,vkCmdBuildAccelerationStructuresKHR);
     LOAD_AS(getASAddress,vkGetAccelerationStructureDeviceAddressKHR);
 #undef LOAD_AS
-    VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO}; pci.queueFamilyIndex=queueFamily; pci.flags=VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO}; pci.queueFamilyIndex=queueFamily;
+    pci.flags=VK_COMMAND_POOL_CREATE_TRANSIENT_BIT|VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     check(vkCreateCommandPool(device,&pci,nullptr,&commandPool),"Create command pool");
+    VkCommandBufferAllocateInfo cai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    cai.commandPool=commandPool; cai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY; cai.commandBufferCount=1;
+    check(vkAllocateCommandBuffers(device,&cai,&commandBuffer),"Allocate command buffer");
     VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO}; check(vkCreateFence(device,&fci,nullptr,&fence),"Create fence");
     createPipeline();
     cameraHistory=buffer(sizeof(GpuCameraHistory),VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+    renderErrors=buffer(64,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    cameraMediumCache=buffer(sizeof(GpuCameraMediumCache),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,BufferMemory::Device);
     resizeOutput(settings,dlss);
   }
-  Buffer buffer(VkDeviceSize bytes,VkBufferUsageFlags usage,bool host=true,const void* data=nullptr) {
+  Buffer buffer(VkDeviceSize bytes,VkBufferUsageFlags usage,BufferMemory memory=BufferMemory::Upload,const void* data=nullptr) {
     Buffer b; b.device=device; b.size=std::max<VkDeviceSize>(bytes,16);
     if((usage&VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) && b.size>properties.limits.maxStorageBufferRange)
       throw std::invalid_argument("Buffer exceeds this GPU's maxStorageBufferRange");
     VkBufferCreateInfo ci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO}; ci.size=b.size; ci.usage=usage; ci.sharingMode=VK_SHARING_MODE_EXCLUSIVE;
     check(vkCreateBuffer(device,&ci,nullptr,&b.handle),"Create buffer");
     VkMemoryRequirements req; vkGetBufferMemoryRequirements(device,b.handle,&req);
-    VkMemoryPropertyFlags flags=host?(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT):VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
-    uint32_t type=UINT32_MAX;
-    for(uint32_t i=0;i<memoryProperties.memoryTypeCount;++i) if((req.memoryTypeBits&(1u<<i)) && (memoryProperties.memoryTypes[i].propertyFlags&flags)==flags) {type=i; break;}
+    const bool host=memory!=BufferMemory::Device;
+    const VkMemoryPropertyFlags required=host?VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT:VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    uint32_t type=UINT32_MAX; int bestScore=-1;
+    for(uint32_t i=0;i<memoryProperties.memoryTypeCount;++i) {
+      const auto flags=memoryProperties.memoryTypes[i].propertyFlags;
+      if(!(req.memoryTypeBits&(1u<<i)) || (flags&required)!=required) continue;
+      // CPU readback favors cached memory even when explicit invalidation is
+      // required. Upload/uniform buffers favor coherent host writes instead.
+      int score=0;
+      if(memory==BufferMemory::Readback) {
+        if(flags&VK_MEMORY_PROPERTY_HOST_CACHED_BIT) score+=4;
+        if(flags&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) score+=2;
+      } else if(memory==BufferMemory::Upload && (flags&VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) score+=2;
+      if(score>bestScore) {type=i; bestScore=score;}
+    }
     if(type==UINT32_MAX) throw std::runtime_error("No suitable Vulkan memory type");
+    b.memoryFlags=memoryProperties.memoryTypes[type].propertyFlags;
     VkMemoryAllocateFlagsInfo addressFlags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO}; addressFlags.flags=VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
     VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO}; ai.allocationSize=req.size; ai.memoryTypeIndex=type;
     if(usage&VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) ai.pNext=&addressFlags;
     check(vkAllocateMemory(device,&ai,nullptr,&b.memory),"Allocate buffer memory"); check(vkBindBufferMemory(device,b.handle,b.memory,0),"Bind buffer memory");
-    if(host) { check(vkMapMemory(device,b.memory,0,VK_WHOLE_SIZE,0,&b.mapped),"Map buffer"); std::memset(b.mapped,0,static_cast<size_t>(b.size)); if(data && bytes) std::memcpy(b.mapped,data,static_cast<size_t>(bytes)); }
+    if(host) {
+      check(vkMapMemory(device,b.memory,0,VK_WHOLE_SIZE,0,&b.mapped),"Map buffer");
+      if(memory==BufferMemory::Upload) {
+        std::memset(b.mapped,0,static_cast<size_t>(b.size));
+        if(data && bytes) std::memcpy(b.mapped,data,static_cast<size_t>(bytes));
+        b.flush();
+      }
+    } else if(data) throw std::logic_error("Device-local data must be uploaded through staging");
     return b;
+  }
+  Buffer stageBuffer(VkDeviceSize bytes,VkBufferUsageFlags usage,const void* data,std::vector<PendingUpload>& pending) {
+    if(bytes && !data) throw std::invalid_argument("Nonempty buffer upload requires source data");
+    auto destination=buffer(bytes,usage|VK_BUFFER_USAGE_TRANSFER_DST_BIT,BufferMemory::Device);
+    auto staging=buffer(bytes,VK_BUFFER_USAGE_TRANSFER_SRC_BIT,BufferMemory::Upload,data);
+    pending.push_back({std::move(staging),destination.handle});
+    return destination;
+  }
+  void uploadBuffers(std::vector<PendingUpload>& pending) {
+    if(pending.empty()) return;
+    submit([&](VkCommandBuffer cmd) {
+      barrier(cmd,VK_PIPELINE_STAGE_HOST_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_HOST_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT);
+      for(const auto& upload:pending) {
+        const VkBufferCopy copy{0,0,upload.staging.size};
+        vkCmdCopyBuffer(cmd,upload.staging.handle,upload.destination,1,&copy);
+      }
+      barrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR|VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+              VK_ACCESS_TRANSFER_WRITE_BIT,VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR|VK_ACCESS_SHADER_READ_BIT);
+    });
+    pending.clear();
   }
   VkDeviceAddress address(const Buffer& b) { VkBufferDeviceAddressInfo info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO}; info.buffer=b.handle; return vkGetBufferDeviceAddress(device,&info); }
   VkDeviceAddress address(const Acceleration& a) { VkAccelerationStructureDeviceAddressInfoKHR info{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR}; info.accelerationStructure=a.handle; return getASAddress(device,&info); }
   void submit(const std::function<void(VkCommandBuffer)>& record) {
-    VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO}; ai.commandPool=commandPool; ai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY; ai.commandBufferCount=1;
-    VkCommandBuffer cmd{}; check(vkAllocateCommandBuffers(device,&ai,&cmd),"Allocate command buffer");
+    const auto cmd=commandBuffer;
+    check(vkResetCommandBuffer(cmd,0),"Reset command buffer");
     try {
       VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO}; bi.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
       check(vkBeginCommandBuffer(cmd,&bi),"Begin command buffer"); record(cmd); check(vkEndCommandBuffer(cmd),"End command buffer");
@@ -287,8 +379,7 @@ struct Renderer::Impl {
       VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO}; si.commandBufferCount=1; si.pCommandBuffers=&cmd;
       check(vkQueueSubmit(queue,1,&si,fence),"Submit GPU work");
       check(vkWaitForFences(device,1,&fence,VK_TRUE,UINT64_MAX),"Wait for GPU");
-    } catch(...) { vkDeviceWaitIdle(device); vkFreeCommandBuffers(device,commandPool,1,&cmd); throw; }
-    vkFreeCommandBuffers(device,commandPool,1,&cmd);
+    } catch(...) { vkDeviceWaitIdle(device); vkResetCommandBuffer(cmd,0); throw; }
   }
   static void barrier(VkCommandBuffer cmd,VkPipelineStageFlags src,VkPipelineStageFlags dst,VkAccessFlags source,VkAccessFlags dest) {
     VkMemoryBarrier b{VK_STRUCTURE_TYPE_MEMORY_BARRIER}; b.srcAccessMask=source; b.dstAccessMask=dest; vkCmdPipelineBarrier(cmd,src,dst,0,1,&b,0,nullptr,0,nullptr);
@@ -300,10 +391,10 @@ struct Renderer::Impl {
     info.type=type; info.flags=VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR; info.mode=VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR; info.geometryCount=1; info.pGeometries=&geometry;
     VkAccelerationStructureBuildSizesInfoKHR sizes{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR}; getBuildSizes(device,VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,&info,&count,&sizes);
     Acceleration result; result.device=device; result.destroy=destroyAS;
-    result.storage=buffer(sizes.accelerationStructureSize,VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR|VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,false);
+    result.storage=buffer(sizes.accelerationStructureSize,VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR|VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,BufferMemory::Device);
     VkAccelerationStructureCreateInfoKHR ci{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR}; ci.type=type; ci.buffer=result.storage.handle; ci.size=sizes.accelerationStructureSize;
     check(createAS(device,&ci,nullptr,&result.handle),"Create acceleration structure");
-    Buffer scratch=buffer(sizes.buildScratchSize+scratchAlignment,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,false);
+    Buffer scratch=buffer(sizes.buildScratchSize+scratchAlignment,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,BufferMemory::Device);
     VkDeviceAddress base=address(scratch); info.scratchData.deviceAddress=(base+scratchAlignment-1)&~VkDeviceAddress(scratchAlignment-1); info.dstAccelerationStructure=result.handle;
     VkAccelerationStructureBuildRangeInfoKHR range{}; range.primitiveCount=count; const auto* ranges=&range;
     submit([&](VkCommandBuffer cmd){
@@ -314,11 +405,11 @@ struct Renderer::Impl {
     return result;
   }
   void createPipeline() {
-    std::array<VkDescriptorSetLayoutBinding,9> bindings{};
+    std::array<VkDescriptorSetLayoutBinding,15> bindings{};
     for(uint32_t i=0;i<bindings.size();++i) { bindings[i].binding=i; bindings[i].descriptorCount=1; bindings[i].descriptorType=i==0?VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:(i==8?VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); bindings[i].stageFlags=VK_SHADER_STAGE_COMPUTE_BIT; }
     VkDescriptorSetLayoutCreateInfo li{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO}; li.bindingCount=static_cast<uint32_t>(bindings.size()); li.pBindings=bindings.data();
     check(vkCreateDescriptorSetLayout(device,&li,nullptr,&descriptorLayout),"Create descriptor layout");
-    VkDescriptorPoolSize sizes[]={{VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,1},{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,7},{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1}};
+    VkDescriptorPoolSize sizes[]={{VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,1},{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,13},{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1}};
     VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO}; pi.maxSets=1; pi.poolSizeCount=3; pi.pPoolSizes=sizes;
     check(vkCreateDescriptorPool(device,&pi,nullptr,&descriptorPool),"Create descriptor pool");
     VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO}; ai.descriptorPool=descriptorPool; ai.descriptorSetCount=1; ai.pSetLayouts=&descriptorLayout;
@@ -334,8 +425,8 @@ struct Renderer::Impl {
   void descriptors() {
     if(!scene) return;
     VkWriteDescriptorSetAccelerationStructureKHR as{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR}; as.accelerationStructureCount=1; as.pAccelerationStructures=&scene->tlas.handle;
-    std::array<VkWriteDescriptorSet,9> writes{}; std::array<VkDescriptorBufferInfo,8> infos{};
-    Buffer* buffers[]={&scene->vertices,&scene->indices,&scene->instances,&scene->materials,&scene->lights,&output,&guides,&cameraHistory};
+    std::array<VkWriteDescriptorSet,15> writes{}; std::array<VkDescriptorBufferInfo,14> infos{};
+    Buffer* buffers[]={&scene->vertices,&scene->indices,&scene->instances,&scene->materials,&scene->lights,&output,&guides,&cameraHistory,&scene->materialInstructions,&scene->textureInfos,&scene->texturePixels,&renderErrors,&cameraMediumCache,&scene->materialMediumTable};
     for(uint32_t i=0;i<writes.size();++i) {
       auto& w=writes[i]; w.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w.dstSet=descriptorSet; w.dstBinding=i; w.descriptorCount=1;
       w.descriptorType=i==0?VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:(i==8?VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
@@ -362,22 +453,31 @@ struct Renderer::Impl {
     const VkDeviceSize bytes=VkDeviceSize(extent.width)*extent.height*sizeof(Float4);
     if(bytes>properties.limits.maxStorageBufferRange || (extent.width+7)/8>properties.limits.maxComputeWorkGroupCount[0] || (extent.height+7)/8>properties.limits.maxComputeWorkGroupCount[1])
       throw std::invalid_argument("Image size exceeds this GPU's storage-buffer or dispatch limit");
-    auto next=buffer(bytes,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    auto nextGuides=buffer(desiredDlss.enabled?VkDeviceSize(extent.width)*extent.height*80:16,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_SRC_BIT,false);
+    auto next=buffer(bytes,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_SRC_BIT,BufferMemory::Device);
+    auto nextGuides=buffer(desiredDlss.enabled?VkDeviceSize(extent.width)*extent.height*80:16,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_SRC_BIT,BufferMemory::Device);
     Buffer nextDenoised;
 #if CAUSTRA_HAS_DLSS
     if(candidate) {
-      nextDenoised=buffer(VkDeviceSize(desired.width)*desired.height*sizeof(Float4),VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+      nextDenoised=buffer(VkDeviceSize(desired.width)*desired.height*sizeof(Float4),VK_BUFFER_USAGE_TRANSFER_DST_BIT,BufferMemory::Readback);
       submit([&](VkCommandBuffer cmd){candidate->configure(cmd,extent,{desired.width,desired.height},desiredDlss.quality,desiredDlss.preset);});
     }
     denoiser=std::move(candidate);
 #endif
     output=std::move(next); guides=std::move(nextGuides); denoisedOutput=std::move(nextDenoised);
+    rawReadback.clear();
     renderSize=extent; settings=desired; dlss=desiredDlss; resetHistory(); descriptors();
   }
   void upload(const Scene& input) {
     validateScene(input);
     auto next=std::make_unique<SceneResources>();
+    std::vector<PendingUpload> pending;
+    for(const auto& material:input.materials) {
+      next->hasMedia=next->hasMedia || material.transmission.x>0 || material.subsurface.x>0 || material.volume.x>0 || material.volume.z>0;
+      for(uint32_t j=0;j<material.program.y;++j) {
+        const auto& op=input.materialInstructions[material.program.x+j].code;
+        if(op.x==uint32_t(MaterialOp::Output) && ((op.z>=25 && op.z<=29) || (op.z>=31 && op.z<=36) || (op.z>=44 && op.z<=49))) next->hasMedia=true;
+      }
+    }
     std::vector<Vertex> vertices; std::vector<uint32_t> indices;
     std::vector<Uint4> meshOffsets;
     for(const auto& mesh:input.meshes) {
@@ -386,9 +486,51 @@ struct Renderer::Impl {
       vertices.insert(vertices.end(),mesh.vertices.begin(),mesh.vertices.end()); indices.insert(indices.end(),mesh.indices.begin(),mesh.indices.end());
     }
     auto usage=VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR|VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-    next->vertices=buffer(vertices.size()*sizeof(Vertex),usage,true,vertices.data());
-    next->indices=buffer(indices.size()*sizeof(uint32_t),usage,true,indices.data());
-    next->materials=buffer(input.materials.size()*sizeof(Material),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,true,input.materials.data());
+    next->vertices=stageBuffer(vertices.size()*sizeof(Vertex),usage,vertices.data(),pending);
+    next->indices=stageBuffer(indices.size()*sizeof(uint32_t),usage,indices.data(),pending);
+    next->materials=stageBuffer(input.materials.size()*sizeof(Material),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,input.materials.data(),pending);
+    next->materialInstructions=stageBuffer(input.materialInstructions.size()*sizeof(MaterialInstruction),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,input.materialInstructions.data(),pending);
+    const uint32_t materialGroups=static_cast<uint32_t>((uint64_t(input.materials.size())+63)/64);
+    next->materialInitX=std::min(materialGroups,properties.limits.maxComputeWorkGroupCount[0]);
+    next->materialInitY=(materialGroups+next->materialInitX-1)/next->materialInitX;
+    if(next->materialInitY>properties.limits.maxComputeWorkGroupCount[1])
+      throw std::invalid_argument("Material medium table initialization exceeds this GPU's dispatch limit");
+    std::vector<GpuTextureInfo> textureInfos;
+    std::vector<Float4> texturePixels;
+    for(const auto& texture:input.textures) {
+      uint64_t texelCount=0;
+      for(uint32_t w=texture.width,h=texture.height;;w=std::max(1u,w/2),h=std::max(1u,h/2)) {
+        texelCount+=uint64_t(w)*h;if(w==1 && h==1) break;
+      }
+      if((texelCount+texturePixels.size())*sizeof(Float4)>properties.limits.maxStorageBufferRange)
+        throw std::invalid_argument("Texture mip atlas exceeds this GPU's storage-buffer range");
+      GpuTextureInfo info{{texture.width,texture.height,static_cast<uint32_t>(texturePixels.size()),0}};
+      auto level=texture.pixels;uint32_t w=texture.width,h=texture.height;
+      for(;;) {
+        texturePixels.insert(texturePixels.end(),level.begin(),level.end());++info.size.w;
+        if(w==1 && h==1) break;
+        const uint32_t nw=std::max(1u,w/2),nh=std::max(1u,h/2);
+        std::vector<Float4> smaller(size_t(nw)*nh);
+        // Area filtering includes the last row/column of odd-sized images.
+        for(uint32_t y=0;y<nh;++y) for(uint32_t x=0;x<nw;++x) {
+          const double x0=double(x)*w/nw,x1=double(x+1)*w/nw,y0=double(y)*h/nh,y1=double(y+1)*h/nh;
+          double sum[4]{};
+          for(uint32_t sy=uint32_t(y0);sy<std::min(h,uint32_t(std::ceil(y1)));++sy)
+            for(uint32_t sx=uint32_t(x0);sx<std::min(w,uint32_t(std::ceil(x1)));++sx) {
+              const double weight=(std::min(x1,double(sx+1))-std::max(x0,double(sx)))*(std::min(y1,double(sy+1))-std::max(y0,double(sy)));
+              const auto& p=level[size_t(sy)*w+sx];sum[0]+=p.x*weight;sum[1]+=p.y*weight;sum[2]+=p.z*weight;sum[3]+=p.w*weight;
+            }
+          const double area=(x1-x0)*(y1-y0);
+          smaller[size_t(y)*nw+x]={float(sum[0]/area),float(sum[1]/area),float(sum[2]/area),float(sum[3]/area)};
+        }
+        level=std::move(smaller);w=nw;h=nh;
+      }
+      textureInfos.push_back(info);
+    }
+    if(textureInfos.empty()) {textureInfos.push_back({{1,1,0,1}});texturePixels.push_back({1,1,1,1});}
+    next->textureInfos=stageBuffer(textureInfos.size()*sizeof(GpuTextureInfo),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,textureInfos.data(),pending);
+    next->texturePixels=stageBuffer(texturePixels.size()*sizeof(Float4),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,texturePixels.data(),pending);
+    uploadBuffers(pending);
     for(size_t m=0;m<input.meshes.size();++m) {
       const auto& mesh=input.meshes[m];
       VkAccelerationStructureGeometryKHR geo{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR}; geo.geometryType=VK_GEOMETRY_TYPE_TRIANGLES_KHR; geo.flags=VK_GEOMETRY_OPAQUE_BIT_KHR;
@@ -401,34 +543,86 @@ struct Renderer::Impl {
     if(input.instances.size()>0x1000000) throw std::invalid_argument("Too many instances for Vulkan's 24-bit custom index");
     for(size_t n=0;n<input.instances.size();++n) {
       const auto& i=input.instances[n]; const auto& mesh=input.meshes[i.mesh]; const auto& mat=input.materials[mesh.material];
-      instanceData.push_back({meshOffsets[i.mesh]});
+      GpuInstance gpu{};gpu.offsets=meshOffsets[i.mesh];
+      const auto& m=i.transform;
+      Float4 column0{m[0],m[4],m[8],0},column1{m[1],m[5],m[9],0},column2{m[2],m[6],m[10],0};
+      auto x=cross(column1,column2),y=cross(column2,column0),z=cross(column0,column1);
+      const float invDet=1.0f/(column0.x*x.x+column0.y*x.y+column0.z*x.z);
+      gpu.worldToObject={mul(x,invDet),mul(y,invDet),mul(z,invDet)};
+      for(size_t row=0;row<3;++row) {
+        auto& r=gpu.worldToObject[row];r.w=-(r.x*m[3]+r.y*m[7]+r.z*m[11]);
+        gpu.objectToWorld[row]={m[row*4],m[row*4+1],m[row*4+2],m[row*4+3]};
+      }
+      gpu.objectMin=gpu.objectMax=mesh.vertices.front().position;
+      for(const auto& v:mesh.vertices) {
+        gpu.objectMin={std::min(gpu.objectMin.x,v.position.x),std::min(gpu.objectMin.y,v.position.y),std::min(gpu.objectMin.z,v.position.z),0};
+        gpu.objectMax={std::max(gpu.objectMax.x,v.position.x),std::max(gpu.objectMax.y,v.position.y),std::max(gpu.objectMax.z,v.position.z),0};
+      }
+      if(mat.program.w&1) {
+        const uint64_t base=(uint64_t(input.materials.size())+uint64_t(next->heterogeneousInstances.size())*kMediumGridCells)*8;
+        if(base+uint64_t(kMediumGridCells)*8>UINT32_MAX) throw std::invalid_argument("Heterogeneous medium grid exceeds 32-bit row addressing");
+        gpu.offsets.w=uint32_t(base);next->heterogeneousInstances.push_back(uint32_t(n));next->hasMedia=true;
+      }
+      instanceData.push_back(gpu);
       VkAccelerationStructureInstanceKHR vi{}; std::memcpy(vi.transform.matrix,i.transform.data(),sizeof(vi.transform.matrix));
       vi.instanceCustomIndex=static_cast<uint32_t>(n); vi.mask=0xFF; vi.flags=VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR; vi.accelerationStructureReference=address(next->blas[i.mesh]); asInstances.push_back(vi);
-      if(std::max({mat.emission.x,mat.emission.y,mat.emission.z})>0) for(size_t t=0;t<mesh.indices.size();t+=3) {
+      bool emitter=std::max({mat.emission.x,mat.emission.y,mat.emission.z})>0;
+      for(uint32_t instruction=0;instruction<mat.program.y;++instruction) {
+        const auto& op=input.materialInstructions[mat.program.x+instruction].code;
+        emitter |= op.x==uint32_t(MaterialOp::Output) && op.z==uint32_t(MaterialParameter::Emission);
+      }
+      if(emitter) for(size_t t=0;t<mesh.indices.size();t+=3) {
         auto a=transform(i,mesh.vertices[mesh.indices[t]].position), b=transform(i,mesh.vertices[mesh.indices[t+1]].position), c=transform(i,mesh.vertices[mesh.indices[t+2]].position);
         auto e1=sub(b,a),e2=sub(c,a); float area=length(cross(e1,e2))*0.5f;
         next->totalArea+=area;
         if(!std::isfinite(next->totalArea) || !(area>0)) throw std::invalid_argument("Transformed light area is invalid");
-        a.w=area; e1.w=next->totalArea; lights.push_back({a,e1,e2,mat.emission});
+        a.w=area; e1.w=next->totalArea; e2.w=instanceOrientation(i);
+        const auto offset=meshOffsets[i.mesh].x;
+        lights.push_back({a,e1,e2,{offset+mesh.indices[t],offset+mesh.indices[t+1],offset+mesh.indices[t+2],mesh.material},
+                          transformNormal(i,mesh.vertices[mesh.indices[t]].normal),
+                          transformNormal(i,mesh.vertices[mesh.indices[t+1]].normal),
+                          transformNormal(i,mesh.vertices[mesh.indices[t+2]].normal),
+                          transformTangent(i,mesh.vertices[mesh.indices[t]].tangent),
+                          transformTangent(i,mesh.vertices[mesh.indices[t+1]].tangent),
+                          transformTangent(i,mesh.vertices[mesh.indices[t+2]].tangent)});
       }
     }
     next->lightCount=static_cast<uint32_t>(lights.size());
-    next->instances=buffer(instanceData.size()*sizeof(GpuInstance),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,true,instanceData.data());
-    next->lights=buffer(lights.size()*sizeof(GpuLight),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,true,lights.data());
-    auto instances=buffer(asInstances.size()*sizeof(VkAccelerationStructureInstanceKHR),usage,true,asInstances.data());
+    const VkDeviceSize mediumBytes=(VkDeviceSize(input.materials.size())+VkDeviceSize(next->heterogeneousInstances.size())*kMediumGridCells)*sizeof(GpuMaterialMediumData);
+    if(mediumBytes>properties.limits.maxStorageBufferRange) throw std::invalid_argument("Heterogeneous medium grids exceed this GPU's storage buffer range");
+    next->materialMediumTable=buffer(mediumBytes,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,BufferMemory::Device);
+    next->instances=stageBuffer(instanceData.size()*sizeof(GpuInstance),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,instanceData.data(),pending);
+    next->lights=stageBuffer(lights.size()*sizeof(GpuLight),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,lights.data(),pending);
+    auto instances=stageBuffer(asInstances.size()*sizeof(VkAccelerationStructureInstanceKHR),usage,asInstances.data(),pending);
+    uploadBuffers(pending);
     VkAccelerationStructureGeometryKHR geo{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR}; geo.geometryType=VK_GEOMETRY_TYPE_INSTANCES_KHR;
     geo.geometry.instances.sType=VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR; geo.geometry.instances.data.deviceAddress=address(instances);
     next->tlas=build(VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,geo,static_cast<uint32_t>(asInstances.size()));
-    scene=std::move(next); resetHistory(); descriptors();
+    scene=std::move(next); cameraMediumDirty=true; resetHistory(); descriptors();
   }
-  void resetHistory() { samples=0; frames=0; }
+  void resetHistory() { samples=0; frames=0; rawReadbackCurrent=false; }
+  void prepareRawReadback() {
+    if(rawReadbackCurrent) return;
+    if(!rawReadback.handle || rawReadback.size!=output.size)
+      rawReadback=buffer(output.size,VK_BUFFER_USAGE_TRANSFER_DST_BIT,BufferMemory::Readback);
+    submit([&](VkCommandBuffer cmd) {
+      barrier(cmd,VK_PIPELINE_STAGE_HOST_BIT|VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,
+              VK_ACCESS_HOST_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT|VK_ACCESS_TRANSFER_WRITE_BIT);
+      const VkBufferCopy copy{0,0,output.size};
+      vkCmdCopyBuffer(cmd,output.handle,rawReadback.handle,1,&copy);
+      barrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,VK_ACCESS_TRANSFER_WRITE_BIT,VK_ACCESS_HOST_READ_BIT);
+    });
+    rawReadback.invalidate();
+    rawReadbackCurrent=true;
+  }
   PushConstants constants() const {
     const auto forward=cameraDirection(camera.target,camera.position);
     const auto right=normalize(cross(forward,normalize(camera.up))), up=cross(right,forward);
     float h=2*std::tan(camera.verticalFov*3.14159265358979323846f/360);
     PushConstants p{}; p.origin=camera.position; p.horizontal=mul(right,h*settings.width/settings.height); p.vertical=mul(up,h);
     p.lowerLeft=sub(sub(forward,mul(p.horizontal,0.5f)),mul(p.vertical,0.5f));
-    p.environment=settings.environment; p.dimensions={renderSize.width,renderSize.height,samples,settings.maxBounces}; p.counts={scene->lightCount,dlss.enabled?1u:0u,static_cast<uint32_t>(frames),frames?1u:0u};
+    p.environment=settings.environment; p.environment.w=scene->hasMedia?1.0f:0.0f;
+    p.dimensions={renderSize.width,renderSize.height,samples,settings.maxBounces}; p.counts={scene->lightCount,dlss.enabled?1u:0u,static_cast<uint32_t>(frames),frames?1u:0u};
     uint32_t jitterIndex=static_cast<uint32_t>(frames%64)+1;
     p.params={scene->totalArea,0.0001f,dlss.enabled?halton(jitterIndex,2)-0.5f:0,dlss.enabled?halton(jitterIndex,3)-0.5f:0}; return p;
   }
@@ -437,12 +631,18 @@ struct Renderer::Impl {
 Renderer::Renderer(const RendererOptions& options):impl_(std::make_unique<Impl>()) { impl_->init(options); }
 Renderer::~Renderer()=default;
 void Renderer::setScene(const Scene& scene) { impl_->upload(scene); }
-void Renderer::setCamera(const Camera& camera) { validateCamera(camera); impl_->camera=camera; reset(); }
+void Renderer::setCamera(const Camera& camera) {
+  validateCamera(camera);
+  if(!sameCameraOrigin(impl_->camera,camera)) impl_->cameraMediumDirty=true;
+  impl_->camera=camera; reset();
+}
 void Renderer::updateCamera(const Camera& camera) {
   validateCamera(camera);
   if(sameCamera(impl_->camera,camera)) return;
+  if(!sameCameraOrigin(impl_->camera,camera)) impl_->cameraMediumDirty=true;
   impl_->camera=camera;
   impl_->samples=0;
+  impl_->rawReadbackCurrent=false;
 }
 void Renderer::setSettings(const RenderSettings& settings) {
   validateSettings(settings); impl_->resizeOutput(settings,impl_->dlss);
@@ -466,15 +666,68 @@ void Renderer::render(uint32_t count) {
     const auto previous=impl_->frames?makeCameraTransforms(impl_->previousCamera,impl_->settings.width,impl_->settings.height):current;
     const GpuCameraHistory history{current.worldToClip,previous.worldToClip};
     std::memcpy(impl_->cameraHistory.mapped,&history,sizeof(history));
+    impl_->cameraHistory.flush();
+    std::memset(impl_->renderErrors.mapped,0,64);
+    impl_->renderErrors.flush();
+    impl_->rawReadbackCurrent=false;
+    const bool initializeMaterials=impl_->scene->materialMediumDirty;
+    const bool initializeMedium=impl_->cameraMediumDirty && impl_->scene->hasMedia;
     impl_->submit([&](VkCommandBuffer cmd){
       Impl::barrier(cmd,VK_PIPELINE_STAGE_HOST_BIT|VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_ACCESS_HOST_WRITE_BIT|VK_ACCESS_SHADER_WRITE_BIT|VK_ACCESS_TRANSFER_READ_BIT,VK_ACCESS_UNIFORM_READ_BIT|VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT);
       vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,impl_->pipeline); vkCmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,impl_->pipelineLayout,0,1,&impl_->descriptorSet,0,nullptr);
+      if(initializeMaterials) {
+        auto initialization=p; initialization.counts.w|=kInitMaterialMedium;
+        initialization.dimensions.x=impl_->scene->materialInitX;
+        vkCmdPushConstants(cmd,impl_->pipelineLayout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(initialization),&initialization);
+        vkCmdDispatch(cmd,impl_->scene->materialInitX,impl_->scene->materialInitY,1);
+        Impl::barrier(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_ACCESS_SHADER_WRITE_BIT,VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT);
+        for(uint32_t instanceIndex:impl_->scene->heterogeneousInstances) {
+          initialization=p;initialization.counts.w|=kInitHeterogeneousMedium;
+          initialization.dimensions.x=instanceIndex;
+          vkCmdPushConstants(cmd,impl_->pipelineLayout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(initialization),&initialization);
+          vkCmdDispatch(cmd,kMediumGridCells/64,1,1);
+          Impl::barrier(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_ACCESS_SHADER_WRITE_BIT,VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT);
+        }
+        Impl::barrier(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_ACCESS_SHADER_WRITE_BIT,VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT);
+      }
+      if(initializeMedium) {
+        auto initialization=p; initialization.counts.w|=kInitCameraMedium;
+        vkCmdPushConstants(cmd,impl_->pipelineLayout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(initialization),&initialization);
+        vkCmdDispatch(cmd,1,1,1);
+        Impl::barrier(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_ACCESS_SHADER_WRITE_BIT,VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT);
+      }
       vkCmdPushConstants(cmd,impl_->pipelineLayout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(p),&p); vkCmdDispatch(cmd,(p.dimensions.x+7)/8,(p.dimensions.y+7)/8,1);
 #if CAUSTRA_HAS_DLSS
       if(impl_->denoiser) impl_->denoiser->evaluate(cmd,impl_->guides.handle,impl_->denoisedOutput.handle,impl_->frames==0,p.params.z,p.params.w,current.view,current.projection);
 #endif
       Impl::barrier(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,VK_ACCESS_SHADER_WRITE_BIT,VK_ACCESS_HOST_READ_BIT);
     });
+    impl_->renderErrors.invalidate();
+    uint32_t errors=0;
+    std::memcpy(&errors,impl_->renderErrors.mapped,sizeof(errors));
+    if(errors) {
+      impl_->resetHistory();
+      if(errors&1) throw std::runtime_error("Medium nesting exceeds the supported depth of 16");
+      if(errors&2) {
+        uint32_t diagnostic[16];std::memcpy(diagnostic,impl_->renderErrors.mapped,sizeof(diagnostic));
+        float point[4];std::memcpy(point,diagnostic+4,sizeof(point));
+        float origin[3],direction[3];std::memcpy(origin,diagnostic+8,sizeof(origin));std::memcpy(direction,diagnostic+11,sizeof(direction));
+        std::ostringstream message;
+        message<<std::setprecision(std::numeric_limits<float>::max_digits10)
+          <<"Invalid medium boundary nesting: site="<<diagnostic[1]<<", instance="<<diagnostic[2]
+          <<", depth="<<((diagnostic[3]>>24)&31)<<", top="<<(diagnostic[3]&0x00ffffffu)
+          <<", entering="<<(diagnostic[3]>>31)<<", distance="<<point[0]
+          <<", point=("<<point[1]<<','<<point[2]<<','<<point[3]<<')'
+          <<", origin=("<<origin[0]<<','<<origin[1]<<','<<origin[2]<<')'
+          <<", direction=("<<direction[0]<<','<<direction[1]<<','<<direction[2]<<')'
+          <<", sample="<<diagnostic[14]<<", source="<<diagnostic[15]
+          <<"; use closed, consistently oriented nested or disjoint volumes";
+        throw std::runtime_error(message.str());
+      }
+      throw std::runtime_error("Invalid medium transport state (GPU diagnostic flags "+std::to_string(errors)+")");
+    }
+    if(initializeMaterials) impl_->scene->materialMediumDirty=false;
+    if(initializeMedium) impl_->cameraMediumDirty=false;
     ++impl_->samples;
     ++impl_->frames;
     impl_->previousCamera=impl_->camera;
@@ -484,12 +737,14 @@ Image Renderer::readback() {
   if(!impl_->dlss.enabled) return readbackRaw();
   if(!impl_->samples) throw std::logic_error("Render at least one sample before readback");
   Image image; image.width=impl_->settings.width; image.height=impl_->settings.height; image.samples=impl_->samples;
+  impl_->denoisedOutput.invalidate();
   image.pixels.resize(size_t(image.width)*image.height); std::memcpy(image.pixels.data(),impl_->denoisedOutput.mapped,image.pixels.size()*sizeof(Float4)); return image;
 }
 Image Renderer::readbackRaw() {
   if(!impl_->samples) throw std::logic_error("Render at least one sample before readback");
   Image image; image.width=impl_->renderSize.width; image.height=impl_->renderSize.height; image.samples=impl_->samples;
-  image.pixels.resize(size_t(image.width)*image.height); std::memcpy(image.pixels.data(),impl_->output.mapped,image.pixels.size()*sizeof(Float4)); return image;
+  impl_->prepareRawReadback();
+  image.pixels.resize(size_t(image.width)*image.height); std::memcpy(image.pixels.data(),impl_->rawReadback.mapped,image.pixels.size()*sizeof(Float4)); return image;
 }
 uint32_t Renderer::sampleCount() const { return impl_->samples; }
 uint64_t Renderer::frameCount() const { return impl_->frames; }

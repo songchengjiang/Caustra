@@ -1,0 +1,56 @@
+<?xml version="1.0"?>
+<materialx version="1.39">
+  <open_pbr_surface name="root__materials_Displacement_Material_Principled_BSDF" type="surfaceshader" nodedef="ND_open_pbr_surface_surfaceshader">
+    <input name="base_color" type="color3" value="0.3799999952316284, 0.18000000715255737, 0.07000000029802322" />
+    <input name="base_diffuse_roughness" type="float" value="0.0" />
+    <input name="base_metalness" type="float" value="0.0" />
+    <input name="base_weight" type="float" value="1.0" />
+    <input name="coat_color" type="color3" value="1.0, 1.0, 1.0" />
+    <input name="coat_ior" type="float" value="1.5" />
+    <input name="coat_roughness" type="float" value="0.029999999329447746" />
+    <input name="coat_weight" type="float" value="0.0" />
+    <input name="emission_color" type="color3" value="1.0, 1.0, 1.0" />
+    <input name="emission_luminance" type="float" value="0.0" />
+    <input name="fuzz_color" type="color3" value="1.0, 1.0, 1.0" />
+    <input name="fuzz_roughness" type="float" value="0.5" />
+    <input name="fuzz_weight" type="float" value="0.0" />
+    <input name="geometry_opacity" type="float" value="1.0" />
+    <input name="geometry_tangent" type="vector3" nodename="root__materials_Displacement_Material_NodeGraphs_node_003" />
+    <input name="specular_color" type="color3" value="1.0, 1.0, 1.0" />
+    <input name="specular_ior" type="float" value="1.5" />
+    <input name="specular_roughness" type="float" value="0.4000000059604645" />
+    <input name="specular_roughness_anisotropy" type="float" value="0.0" />
+    <input name="specular_weight" type="float" value="1.0" />
+    <input name="subsurface_color" type="color3" value="0.3799999952316284, 0.18000000715255737, 0.07000000029802322" />
+    <input name="subsurface_radius" type="float" value="0.05000000074505806" />
+    <input name="subsurface_radius_scale" type="color3" value="1.0, 0.20000000298023224, 0.10000000149011612" />
+    <input name="subsurface_scatter_anisotropy" type="float" value="0.0" />
+    <input name="subsurface_weight" type="float" value="0.0" />
+    <input name="thin_film_ior" type="float" value="1.3300000429153442" />
+    <input name="thin_film_thickness" type="float" value="0.0" />
+    <input name="thin_film_weight" type="float" value="0.0" />
+    <input name="transmission_color" type="color3" value="0.3799999952316284, 0.18000000715255737, 0.07000000029802322" />
+    <input name="transmission_weight" type="float" value="0.0" />
+  </open_pbr_surface>
+  <normalize name="root__materials_Displacement_Material_NodeGraphs_node_003" type="vector3" nodedef="ND_normalize_vector3">
+    <input name="in" type="vector3" nodename="root__materials_Displacement_Material_NodeGraphs_node_002" />
+  </normalize>
+  <tangent name="root__materials_Displacement_Material_NodeGraphs_node_002" type="vector3" nodedef="ND_tangent_vector3">
+    <input name="space" type="string" value="world" />
+  </tangent>
+  <surfacematerial name="asset_material" type="material">
+    <input name="surfaceshader" type="surfaceshader" nodename="root__materials_Displacement_Material_Principled_BSDF" />
+    <input name="displacementshader" type="displacementshader" nodename="root__materials_Displacement_Material_caustra_displacement" />
+  </surfacematerial>
+  <displacement name="root__materials_Displacement_Material_caustra_displacement" type="displacementshader" nodedef="ND_displacement_float">
+    <input name="displacement" type="float" nodename="root__materials_Displacement_Material_caustra_noise" />
+  </displacement>
+  <noise3d name="root__materials_Displacement_Material_caustra_noise" type="float" nodedef="ND_noise3d_float">
+    <input name="amplitude" type="float" value="0.4000000059604645" />
+    <input name="pivot" type="float" value="0.10000000149011612" />
+    <input name="position" type="vector3" nodename="root__materials_Displacement_Material_caustra_position" />
+  </noise3d>
+  <position name="root__materials_Displacement_Material_caustra_position" type="vector3" nodedef="ND_position_vector3">
+    <input name="space" type="string" value="object" />
+  </position>
+</materialx>

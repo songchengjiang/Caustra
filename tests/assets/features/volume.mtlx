@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<materialx version="1.39">
+  <volume name="root__materials_Volume_Box_Material_caustra_volume" type="volumeshader" nodedef="ND_volume">
+    <input name="edf" type="EDF" nodename="root__materials_Volume_Box_Material_caustra_edf" />
+    <input name="vdf" type="VDF" nodename="root__materials_Volume_Box_Material_caustra_vdf" />
+  </volume>
+  <uniform_edf name="root__materials_Volume_Box_Material_caustra_edf" type="EDF" nodedef="ND_uniform_edf">
+    <input name="color" type="color3" value="0.009999999776482582, 0.014999999664723873, 0.02500000037252903" />
+  </uniform_edf>
+  <anisotropic_vdf name="root__materials_Volume_Box_Material_caustra_vdf" type="VDF" nodedef="ND_anisotropic_vdf">
+    <input name="absorption" type="vector3" value="0.15000000596046448, 0.03999999910593033, 0.019999999552965164" />
+    <input name="anisotropy" type="float" value="0.3499999940395355" />
+    <input name="scattering" type="vector3" value="0.550000011920929, 0.6499999761581421, 0.800000011920929" />
+  </anisotropic_vdf>
+  <volumematerial name="asset_volume_material" type="material" nodedef="ND_volumematerial">
+    <input name="volumeshader" type="volumeshader" nodename="root__materials_Volume_Box_Material_caustra_volume" />
+  </volumematerial>
+</materialx>
