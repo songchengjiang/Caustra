@@ -67,10 +67,15 @@ public:
   Renderer(const Renderer&) = delete;
   Renderer& operator=(const Renderer&) = delete;
   void setScene(const Scene& scene);
+  // Camera cut: clears raw accumulation and DLSS temporal history.
   void setCamera(const Camera& camera);
+  // Continuous camera motion in a static scene: clears raw accumulation when
+  // changed, preserving DLSS history with camera reprojection motion vectors.
+  void updateCamera(const Camera& camera);
   void setSettings(const RenderSettings& settings);
   // Optional NVIDIA DLSS Ray Reconstruction. Enabling unsupported hardware or
   // a build without DLSS throws; the previously working configuration is kept.
+  // May be switched off and on repeatedly; disabling releases feature resources.
   void setDlssSettings(const DlssSettings& settings);
   DlssSettings dlssSettings() const;
   std::string dlssStatus() const;
@@ -79,6 +84,7 @@ public:
   Image readback(); // DLSS output when enabled, otherwise progressive raw HDR
   Image readbackRaw(); // progressive raw HDR at the internal render resolution
   uint32_t sampleCount() const;
+  uint64_t frameCount() const; // frames since full reset; updateCamera preserves it
   std::string deviceName() const;
   uint32_t validationErrorCount() const;
 private:

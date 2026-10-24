@@ -23,6 +23,11 @@ struct PushConstants
   uint4 counts;
   float4 params;
 };
+struct GpuCameraHistory
+{
+  float4x4 currentWorldToClip;
+  float4x4 previousWorldToClip;
+};
 
 [[vk::binding(0, 0)]] RaytracingAccelerationStructure topLevelAS;
 [[vk::binding(1, 0)]] StructuredBuffer<Vertex> vertices;
@@ -34,6 +39,7 @@ struct PushConstants
 // Optional DLSS RR input planes; byte offsets match renderer.cpp. Raw
 // progressive radiance stays in accumulation, independently of DLSS history.
 [[vk::binding(7, 0)]] RWByteAddressBuffer guideBuffer;
+[[vk::binding(8, 0)]] ConstantBuffer<GpuCameraHistory> cameraHistory;
 [[vk::push_constant]] ConstantBuffer<PushConstants> pc;
 
 static const float FAR_DISTANCE = 1.0e30f;
@@ -73,7 +79,24 @@ struct DenoiserGuides
   float roughness;
   float linearDepth;
   float specularHitDistance;
+  float2 motion;
 };
+
+// NGX expects current-to-previous displacement in input-resolution pixels.
+// Both transforms are unjittered: the primary sample's jitter is supplied to
+// NGX separately and must not be added to these motion vectors. A direction
+// (w=0) reprojects the constant environment without camera translation.
+float2 cameraMotion(float4 worldPositionOrDirection)
+{
+  if(pc.counts.w == 0) return float2(0.0f);
+  float4 current = mul(cameraHistory.currentWorldToClip, worldPositionOrDirection);
+  float4 previous = mul(cameraHistory.previousWorldToClip, worldPositionOrDirection);
+  if(current.w <= pc.params.y || previous.w <= pc.params.y
+     || !finite3(float3(current.xy, current.w)) || !finite3(float3(previous.xy, previous.w)))
+    return float2(0.0f);
+  float2 motion = (previous.xy / previous.w - current.xy / current.w) * 0.5f * float2(pc.dimensions.xy);
+  return !any(isnan(motion)) && !any(isinf(motion)) ? motion : float2(0.0f);
+}
 
 // Adapted from vk_gltf_renderer/shaders/dlss_util.h (NVIDIA, Apache-2.0):
 // Ray Tracing Gems, Chapter 32's integrated GGX specular reflectance fit.
@@ -102,9 +125,7 @@ void writeDenoiserGuides(uint index, float3 noisyRadiance, DenoiserGuides guides
   guideBuffer.Store4(16 * pixels + 16 * index, asuint(float4(guides.diffuseAlbedo, 1.0f)));
   guideBuffer.Store4(32 * pixels + 16 * index, asuint(float4(guides.specularAlbedo, 1.0f)));
   guideBuffer.Store4(48 * pixels + 16 * index, asuint(float4(guides.normal, guides.roughness)));
-  // The synchronous API resets history on every camera or scene update.
-  // Between resets the unjittered image is static, so pixel motion is zero.
-  guideBuffer.Store2(64 * pixels + 8 * index, asuint(float2(0.0f)));
+  guideBuffer.Store2(64 * pixels + 8 * index, asuint(guides.motion));
   guideBuffer.Store(72 * pixels + 4 * index, asuint(guides.linearDepth));
   guideBuffer.Store(76 * pixels + 4 * index, asuint(guides.specularHitDistance));
 }
@@ -226,6 +247,7 @@ float3 pathTrace(RayDesc ray, inout uint seed, out DenoiserGuides guides)
   guides.roughness = 1.0f;
   guides.linearDepth = GUIDE_FAR_DISTANCE;
   bool dlssEnabled = pc.counts.y == 1;
+  if(dlssEnabled) guides.motion = cameraMotion(float4(ray.Direction, 0.0f));
   bool captureSpecularHit = false;
   float3 radiance = float3(0.0f);
   float3 throughput = float3(1.0f);
@@ -263,6 +285,7 @@ float3 pathTrace(RayDesc ray, inout uint seed, out DenoiserGuides guides)
                                                  saturate(dot(hit.shadingNormal, -ray.Direction)));
       float3 viewForward = normalize(pc.lowerLeft.xyz + 0.5f * pc.horizontal.xyz + 0.5f * pc.vertical.xyz);
       guides.linearDepth = clamp(dot(hit.position - pc.origin.xyz, viewForward), pc.params.y, GUIDE_FAR_DISTANCE);
+      guides.motion = cameraMotion(float4(hit.position, 1.0f));
     }
     if(any(material.emission.xyz > 0.0f))
     {
@@ -319,7 +342,7 @@ void main(uint3 thread : SV_DispatchThreadID)
 {
   if(thread.x >= pc.dimensions.x || thread.y >= pc.dimensions.y) return;
   uint index = thread.y * pc.dimensions.x + thread.x;
-  uint seed = xxhash32(uint3(thread.xy, pc.dimensions.z));
+  uint seed = xxhash32(uint3(thread.xy, pc.counts.z));
   bool dlssEnabled = pc.counts.y == 1;
   // A single frame-wide Halton offset permits DLSS temporal reconstruction.
   // Independent per-pixel stochastic primary jitter remains the raw mode.

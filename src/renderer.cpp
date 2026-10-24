@@ -36,7 +36,11 @@ Float4 cameraDirection(Float4 target,Float4 origin) {
   double magnitude=std::hypot(x,y,z);
   return {float(x/magnitude),float(y/magnitude),float(z/magnitude),0};
 }
-float dot(Float4 a,Float4 b) { return a.x*b.x+a.y*b.y+a.z*b.z; }
+bool sameCamera(const Camera& a,const Camera& b) {
+  const auto near=[](float x,float y) { return std::abs(x-y)<=1e-6f*std::max({1.0f,std::abs(x),std::abs(y)}); };
+  const auto near3=[&](Float4 x,Float4 y) { return near(x.x,y.x) && near(x.y,y.y) && near(x.z,y.z); };
+  return near3(a.position,b.position) && near3(a.target,b.target) && near3(a.up,b.up) && near(a.verticalFov,b.verticalFov);
+}
 float halton(uint32_t index,uint32_t base) {
   float value=0,weight=1;
   while(index) { weight/=base; value+=weight*(index%base); index/=base; }
@@ -104,23 +108,27 @@ struct Renderer::Impl {
   uint32_t scratchAlignment=256;
   uint64_t maxPrimitiveCount=0, maxInstanceCount=0;
   std::atomic<uint32_t> validationErrors{0};
-  RenderSettings settings; Camera camera; uint32_t samples=0;
+  RenderSettings settings; Camera camera, previousCamera; uint32_t samples=0;
+  uint64_t frames=0;
   DlssSettings dlss;
   VkExtent2D renderSize{640,480};
   bool dlssExtensions=false;
   std::string dlssUnavailable="DLSS is not compiled into this build";
 #if CAUSTRA_HAS_DLSS
+  // Keep the NGX device session alive across Off/On and feature replacements.
+  std::shared_ptr<DlssSession> dlssSession;
   std::unique_ptr<DlssBackend> denoiser;
 #endif
   std::unique_ptr<SceneResources> scene;
-  Buffer output, guides, denoisedOutput;
+  Buffer output, guides, denoisedOutput, cameraHistory;
 
   ~Impl() {
     if(device) vkDeviceWaitIdle(device);
 #if CAUSTRA_HAS_DLSS
     denoiser.reset();
+    dlssSession.reset();
 #endif
-    scene.reset(); output.clear(); guides.clear(); denoisedOutput.clear();
+    scene.reset(); output.clear(); guides.clear(); denoisedOutput.clear(); cameraHistory.clear();
     if(pipeline) vkDestroyPipeline(device,pipeline,nullptr);
     if(pipelineLayout) vkDestroyPipelineLayout(device,pipelineLayout,nullptr);
     if(descriptorPool) vkDestroyDescriptorPool(device,descriptorPool,nullptr);
@@ -246,6 +254,7 @@ struct Renderer::Impl {
     check(vkCreateCommandPool(device,&pci,nullptr,&commandPool),"Create command pool");
     VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO}; check(vkCreateFence(device,&fci,nullptr,&fence),"Create fence");
     createPipeline();
+    cameraHistory=buffer(sizeof(GpuCameraHistory),VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
     resizeOutput(settings,dlss);
   }
   Buffer buffer(VkDeviceSize bytes,VkBufferUsageFlags usage,bool host=true,const void* data=nullptr) {
@@ -305,12 +314,12 @@ struct Renderer::Impl {
     return result;
   }
   void createPipeline() {
-    std::array<VkDescriptorSetLayoutBinding,8> bindings{};
-    for(uint32_t i=0;i<bindings.size();++i) { bindings[i].binding=i; bindings[i].descriptorCount=1; bindings[i].descriptorType=i==0?VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; bindings[i].stageFlags=VK_SHADER_STAGE_COMPUTE_BIT; }
+    std::array<VkDescriptorSetLayoutBinding,9> bindings{};
+    for(uint32_t i=0;i<bindings.size();++i) { bindings[i].binding=i; bindings[i].descriptorCount=1; bindings[i].descriptorType=i==0?VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:(i==8?VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); bindings[i].stageFlags=VK_SHADER_STAGE_COMPUTE_BIT; }
     VkDescriptorSetLayoutCreateInfo li{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO}; li.bindingCount=static_cast<uint32_t>(bindings.size()); li.pBindings=bindings.data();
     check(vkCreateDescriptorSetLayout(device,&li,nullptr,&descriptorLayout),"Create descriptor layout");
-    VkDescriptorPoolSize sizes[]={{VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,1},{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,7}};
-    VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO}; pi.maxSets=1; pi.poolSizeCount=2; pi.pPoolSizes=sizes;
+    VkDescriptorPoolSize sizes[]={{VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,1},{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,7},{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1}};
+    VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO}; pi.maxSets=1; pi.poolSizeCount=3; pi.pPoolSizes=sizes;
     check(vkCreateDescriptorPool(device,&pi,nullptr,&descriptorPool),"Create descriptor pool");
     VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO}; ai.descriptorPool=descriptorPool; ai.descriptorSetCount=1; ai.pSetLayouts=&descriptorLayout;
     check(vkAllocateDescriptorSets(device,&ai,&descriptorSet),"Allocate descriptor set");
@@ -325,11 +334,11 @@ struct Renderer::Impl {
   void descriptors() {
     if(!scene) return;
     VkWriteDescriptorSetAccelerationStructureKHR as{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR}; as.accelerationStructureCount=1; as.pAccelerationStructures=&scene->tlas.handle;
-    std::array<VkWriteDescriptorSet,8> writes{}; std::array<VkDescriptorBufferInfo,7> infos{};
-    Buffer* buffers[]={&scene->vertices,&scene->indices,&scene->instances,&scene->materials,&scene->lights,&output,&guides};
+    std::array<VkWriteDescriptorSet,9> writes{}; std::array<VkDescriptorBufferInfo,8> infos{};
+    Buffer* buffers[]={&scene->vertices,&scene->indices,&scene->instances,&scene->materials,&scene->lights,&output,&guides,&cameraHistory};
     for(uint32_t i=0;i<writes.size();++i) {
       auto& w=writes[i]; w.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w.dstSet=descriptorSet; w.dstBinding=i; w.descriptorCount=1;
-      w.descriptorType=i==0?VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+      w.descriptorType=i==0?VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:(i==8?VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
       if(i==0) w.pNext=&as;
       else { infos[i-1]={buffers[i-1]->handle,0,buffers[i-1]->size}; w.pBufferInfo=&infos[i-1]; }
     }
@@ -343,7 +352,8 @@ struct Renderer::Impl {
     std::unique_ptr<DlssBackend> candidate;
     if(desiredDlss.enabled) {
       if(!dlssExtensions) throw std::runtime_error(dlssUnavailable);
-      candidate=std::make_unique<DlssBackend>(instance,physical,device);
+      if(!dlssSession) dlssSession=std::make_shared<DlssSession>(instance,physical,device);
+      candidate=std::make_unique<DlssBackend>(dlssSession);
       extent=candidate->inputSize({desired.width,desired.height},desiredDlss.quality);
     }
 #else
@@ -363,7 +373,7 @@ struct Renderer::Impl {
     denoiser=std::move(candidate);
 #endif
     output=std::move(next); guides=std::move(nextGuides); denoisedOutput=std::move(nextDenoised);
-    renderSize=extent; settings=desired; dlss=desiredDlss; samples=0; descriptors();
+    renderSize=extent; settings=desired; dlss=desiredDlss; resetHistory(); descriptors();
   }
   void upload(const Scene& input) {
     validateScene(input);
@@ -409,26 +419,18 @@ struct Renderer::Impl {
     VkAccelerationStructureGeometryKHR geo{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR}; geo.geometryType=VK_GEOMETRY_TYPE_INSTANCES_KHR;
     geo.geometry.instances.sType=VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR; geo.geometry.instances.data.deviceAddress=address(instances);
     next->tlas=build(VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,geo,static_cast<uint32_t>(asInstances.size()));
-    scene=std::move(next); samples=0; descriptors();
+    scene=std::move(next); resetHistory(); descriptors();
   }
+  void resetHistory() { samples=0; frames=0; }
   PushConstants constants() const {
     const auto forward=cameraDirection(camera.target,camera.position);
     const auto right=normalize(cross(forward,normalize(camera.up))), up=cross(right,forward);
     float h=2*std::tan(camera.verticalFov*3.14159265358979323846f/360);
     PushConstants p{}; p.origin=camera.position; p.horizontal=mul(right,h*settings.width/settings.height); p.vertical=mul(up,h);
     p.lowerLeft=sub(sub(forward,mul(p.horizontal,0.5f)),mul(p.vertical,0.5f));
-    p.environment=settings.environment; p.dimensions={renderSize.width,renderSize.height,samples,settings.maxBounces}; p.counts={scene->lightCount,dlss.enabled?1u:0u,0,0};
-    uint32_t jitterIndex=(samples%64)+1;
+    p.environment=settings.environment; p.dimensions={renderSize.width,renderSize.height,samples,settings.maxBounces}; p.counts={scene->lightCount,dlss.enabled?1u:0u,static_cast<uint32_t>(frames),frames?1u:0u};
+    uint32_t jitterIndex=static_cast<uint32_t>(frames%64)+1;
     p.params={scene->totalArea,0.0001f,dlss.enabled?halton(jitterIndex,2)-0.5f:0,dlss.enabled?halton(jitterIndex,3)-0.5f:0}; return p;
-  }
-  std::array<float,16> viewMatrix() const {
-    const auto f=cameraDirection(camera.target,camera.position), r=normalize(cross(f,normalize(camera.up))),u=cross(r,f);
-    return {r.x,r.y,r.z,-dot(r,camera.position), u.x,u.y,u.z,-dot(u,camera.position), -f.x,-f.y,-f.z,dot(f,camera.position), 0,0,0,1};
-  }
-  std::array<float,16> projectionMatrix() const {
-    float y=1/std::tan(camera.verticalFov*3.14159265358979323846f/360),x=y*settings.height/settings.width;
-    constexpr float nearPlane=0.01f, farPlane=10000;
-    return {x,0,0,0, 0,-y,0,0, 0,0,farPlane/(nearPlane-farPlane),(farPlane*nearPlane)/(nearPlane-farPlane), 0,0,-1,0};
   }
 };
 
@@ -436,6 +438,12 @@ Renderer::Renderer(const RendererOptions& options):impl_(std::make_unique<Impl>(
 Renderer::~Renderer()=default;
 void Renderer::setScene(const Scene& scene) { impl_->upload(scene); }
 void Renderer::setCamera(const Camera& camera) { validateCamera(camera); impl_->camera=camera; reset(); }
+void Renderer::updateCamera(const Camera& camera) {
+  validateCamera(camera);
+  if(sameCamera(impl_->camera,camera)) return;
+  impl_->camera=camera;
+  impl_->samples=0;
+}
 void Renderer::setSettings(const RenderSettings& settings) {
   validateSettings(settings); impl_->resizeOutput(settings,impl_->dlss);
 }
@@ -447,22 +455,29 @@ std::string Renderer::dlssStatus() const {
   if(impl_->dlss.enabled) return "DLSS Ray Reconstruction active: "+std::to_string(impl_->renderSize.width)+"x"+std::to_string(impl_->renderSize.height)+" -> "+std::to_string(impl_->settings.width)+"x"+std::to_string(impl_->settings.height);
   return impl_->dlssUnavailable.empty()?"DLSS Ray Reconstruction off (SDK compiled, runtime capability checked when enabled)":"DLSS Ray Reconstruction unavailable: "+impl_->dlssUnavailable;
 }
-void Renderer::reset() { impl_->samples=0; }
+void Renderer::reset() { impl_->resetHistory(); }
 void Renderer::render(uint32_t count) {
   if(!impl_->scene) throw std::logic_error("Call setScene before render");
   if(count>UINT32_MAX-impl_->samples) throw std::overflow_error("Sample counter overflow");
+  if(count>UINT64_MAX-impl_->frames) throw std::overflow_error("Frame counter overflow");
   for(uint32_t i=0;i<count;++i) {
     auto p=impl_->constants();
+    const auto current=makeCameraTransforms(impl_->camera,impl_->settings.width,impl_->settings.height);
+    const auto previous=impl_->frames?makeCameraTransforms(impl_->previousCamera,impl_->settings.width,impl_->settings.height):current;
+    const GpuCameraHistory history{current.worldToClip,previous.worldToClip};
+    std::memcpy(impl_->cameraHistory.mapped,&history,sizeof(history));
     impl_->submit([&](VkCommandBuffer cmd){
-      Impl::barrier(cmd,VK_PIPELINE_STAGE_HOST_BIT|VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_ACCESS_HOST_WRITE_BIT|VK_ACCESS_SHADER_WRITE_BIT|VK_ACCESS_TRANSFER_READ_BIT,VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT);
+      Impl::barrier(cmd,VK_PIPELINE_STAGE_HOST_BIT|VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_ACCESS_HOST_WRITE_BIT|VK_ACCESS_SHADER_WRITE_BIT|VK_ACCESS_TRANSFER_READ_BIT,VK_ACCESS_UNIFORM_READ_BIT|VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT);
       vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,impl_->pipeline); vkCmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,impl_->pipelineLayout,0,1,&impl_->descriptorSet,0,nullptr);
       vkCmdPushConstants(cmd,impl_->pipelineLayout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(p),&p); vkCmdDispatch(cmd,(p.dimensions.x+7)/8,(p.dimensions.y+7)/8,1);
 #if CAUSTRA_HAS_DLSS
-      if(impl_->denoiser) impl_->denoiser->evaluate(cmd,impl_->guides.handle,impl_->denoisedOutput.handle,impl_->samples==0,p.params.z,p.params.w,impl_->viewMatrix(),impl_->projectionMatrix());
+      if(impl_->denoiser) impl_->denoiser->evaluate(cmd,impl_->guides.handle,impl_->denoisedOutput.handle,impl_->frames==0,p.params.z,p.params.w,current.view,current.projection);
 #endif
       Impl::barrier(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,VK_ACCESS_SHADER_WRITE_BIT,VK_ACCESS_HOST_READ_BIT);
     });
     ++impl_->samples;
+    ++impl_->frames;
+    impl_->previousCamera=impl_->camera;
   }
 }
 Image Renderer::readback() {
@@ -477,6 +492,7 @@ Image Renderer::readbackRaw() {
   image.pixels.resize(size_t(image.width)*image.height); std::memcpy(image.pixels.data(),impl_->output.mapped,image.pixels.size()*sizeof(Float4)); return image;
 }
 uint32_t Renderer::sampleCount() const { return impl_->samples; }
+uint64_t Renderer::frameCount() const { return impl_->frames; }
 std::string Renderer::deviceName() const { return impl_->properties.deviceName; }
 uint32_t Renderer::validationErrorCount() const { return impl_->validationErrors.load(); }
 } // namespace caustra

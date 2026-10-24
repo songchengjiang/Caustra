@@ -10,6 +10,22 @@
 
 namespace caustra {
 
+// NGX initialization belongs to the Vulkan device lifetime, independently of
+// whether a denoising feature is currently enabled. Construct lazily once and
+// keep this session until its Vulkan device is about to be destroyed.
+class DlssSession {
+public:
+  DlssSession(VkInstance instance, VkPhysicalDevice physical, VkDevice device);
+  ~DlssSession();
+  DlssSession(const DlssSession&) = delete;
+  DlssSession& operator=(const DlssSession&) = delete;
+
+private:
+  friend class DlssBackend;
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+};
+
 // Internal NGX adapter. The caller owns device/queue synchronization and must
 // finish all recorded commands before destroying or reconfiguring this object.
 class DlssBackend {
@@ -17,7 +33,7 @@ public:
   static std::vector<std::string> requiredInstanceExtensions();
   static std::vector<std::string> requiredDeviceExtensions(VkInstance instance, VkPhysicalDevice physical);
 
-  DlssBackend(VkInstance instance, VkPhysicalDevice physical, VkDevice device);
+  explicit DlssBackend(std::shared_ptr<DlssSession> session);
   ~DlssBackend();
   DlssBackend(const DlssBackend&) = delete;
   DlssBackend& operator=(const DlssBackend&) = delete;

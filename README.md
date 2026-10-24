@@ -1,6 +1,6 @@
 # Caustra：纯 Vulkan Path Tracer
 
-基于本机 `vk_gltf_renderer` 的路径追踪实现与其使用的 NVIDIA `nvshaders` 拆分改造。第一阶段提供独立 C++20 静态库、程序化 Cornell Box 示例、命令行出图和回归测试。原始工程保持原样；新工程不链接原工程或 `nvpro_core2`，运行时不需要任何模型文件。
+基于本机 `vk_gltf_renderer` 的路径追踪实现与其使用的 NVIDIA `nvshaders` 拆分改造。提供独立 C++20 静态库、命令行出图、Windows 实时查看 Demo 和回归测试。原始工程保持原样；新工程不链接原工程或 `nvpro_core2`，运行时不需要任何模型文件。
 
 保留 Vulkan Ray Query 硬件求交、每个网格的 BLAS、实例 TLAS、漫反射与 GGX 金属/粗糙度材质、三角形面积光、NEE、多重重要性采样、Russian Roulette、渐进累积和线性 HDR 回读；提供可选的 NVIDIA DLSS Ray Reconstruction 降噪与升采样。去掉 glTF/OBJ 加载、场景编辑器、光栅化、动画、复杂天空、AI 桥接和 OptiX/OIDN。材质第一阶段是双面不透明材质；基础颜色、金属度、粗糙度和自发光可由调用方直接提交。
 
@@ -15,6 +15,43 @@ Cornell Box：960×720、2048 samples per pixel、最多 8 次散射，包含金
 DLSS 原生分辨率对照：960×720、64 个 1 spp 时域帧、RR 预设 E。左侧为同一批样本的原始累积结果，右侧为 DLSS Ray Reconstruction 输出。
 
 ![左侧为原始累积图，右侧为 DLSS Ray Reconstruction 降噪图](docs/images/dlss_comparison.png)
+
+## 实时查看 Demo（Windows）
+
+构建后运行：
+
+```powershell
+./build/bin/Release/caustra_viewer.exe
+```
+
+窗口中实时渲染程序生成的铜色环结模型、底座和开放式摄影棚，可从各方向旋转查看。默认每帧 1 spp，在支持的硬件上自动开启 DLSS Quality；不可用时状态栏会说明并使用原始 Path Trace。静止后继续渐进收敛，拖动时通过相机运动向量保留 DLSS 历史。模型、材质和窗口逻辑都在示例层，渲染库不依赖窗口系统或模型加载器。
+
+![实时查看 Demo：环绕相机、DLSS 模式和渐进采样](docs/images/realtime_viewer.png)
+
+| 操作 | 功能 |
+| --- | --- |
+| 左键拖动 | 围绕模型旋转视角 |
+| 右键或中键拖动 | 平移观察目标 |
+| 鼠标滚轮 | 缩放 |
+| `R` / `Home` | 恢复初始视角并重置累积 |
+| `Space` | 暂停 / 恢复渲染 |
+| `A` | 自动旋转视角 |
+| `D` | 切换 DLSS 开关 |
+| `S` | 保存当前 PPM 与线性 HDR PFM 到 `renders/` |
+| `Esc` | 关闭窗口 |
+
+顶部控件可以选择 DLSS 模式、每次呈现的采样数，也可暂停、重置、保存和自动旋转。画面角落显示实际 FPS、渲染尺寸与当前视角累积样本数。初始化 DLSS 或改变分辨率时可能短暂等待；最小化后暂停 GPU 工作。大窗口的输出限制在约一百万像素，以控制回读和显示开销。
+
+```powershell
+# 明确指定模式；显式请求的 DLSS 不可用时会报错
+./build/bin/Release/caustra_viewer.exe --dlss native --validation
+# 连续旋转展示
+./build/bin/Release/caustra_viewer.exe --auto-orbit --width 960 --height 640
+# 自动交互验证：真实窗口消息驱动旋转、平移、缩放、尺寸变化和暂停/重置
+./build/bin/Release/caustra_viewer.exe --dlss off --smoke-test --validation --screenshot renders/viewer.bmp
+```
+
+实时查看器目前使用 Win32/GDI，只在 Windows 构建。`-DCAUSTRA_BUILD_VIEWER=OFF` 可关闭这个目标；Linux 保留原有离线示例。可用 `-DCAUSTRA_VIEWER_TESTS=ON` 将需要桌面会话的窗口交互测试加入 CTest。
 
 ## 构建与运行
 
@@ -53,7 +90,7 @@ DLSS 在构建时默认启用支持，运行时默认关闭。纯原生渲染构
 
 DLSS 是时域降噪：每次采样提交一帧全新的 1 spp 噪声输入，`--samples 64` 在 DLSS 模式下代表 64 个时域帧。输入还包括法线/粗糙度、漫反射与高光反照率、线性深度、运动矢量和高光命中距离。DLSS 自己维护历史，原生路径的累积平均保留为独立输出。`--save-raw` 额外保存 `_raw.ppm` 与 `_raw.pfm`，其尺寸是实际内部分辨率。
 
-库接口用 `setDlssSettings` 设置 `DlssSettings` 的开关、质量与模型预设；`dlssStatus` 返回当前状态。开启后 `readback` 返回降噪后的目标分辨率图，`readbackRaw` 返回内部原始累积图。设置失败保留此前可运行的配置。相机、场景或设置变化会重置累积和 DLSS 历史；当前同步静态场景接口使用零运动矢量。未来加入连续动画/相机运动时需要实现跨帧变换与重投影，才能保留运动中的时域历史。
+库接口用 `setDlssSettings` 设置 `DlssSettings` 的开关、质量与模型预设；`dlssStatus` 返回当前状态。开启后 `readback` 返回降噪后的目标分辨率图，`readbackRaw` 返回内部原始累积图。设置失败保留此前可运行的配置。`setCamera` 表示相机切换，会重置累积和 DLSS 历史；连续移动时使用 `updateCamera`，它清空当前视角的原始累积，并通过当前/上一帧矩阵生成像素运动向量，保留 DLSS 历史。场景、分辨率和渲染配置变化仍完整重置。当前运动向量支持静态几何的相机移动；未来动态模型需要补充实例/顶点的上一帧变换。
 
 当前开发用 NGX application ID 与原始示例一致，可通过 `CAUSTRA_DLSS_APPLICATION_ID` 覆盖。DLSS SDK 和运行库沿用 NVIDIA 自身的许可，不属于工程 Apache-2.0 代码。
 
@@ -77,7 +114,7 @@ image.savePfm("result.pfm");
 
 ## 验证
 
-CPU 测试检查非法索引、退化网格、矩阵、相机、材质、DLSS 配置和图像保存。GPU 集成测试检查渐进采样确定性、相机与场景重置、尺寸变化、非均匀缩放、无面积光场景和失败上传后的状态。`--validation` 开启 Vulkan Validation Layer，错误会使测试失败。在 NVIDIA RTX 环境配置 `-DCAUSTRA_DLSS_GPU_TESTS=ON` 可将 DLSS 实际执行、升采样、配置切换和历史重置加入 CTest，并启用同步验证。
+CPU 测试检查非法索引、退化网格、矩阵、相机、材质、DLSS 配置、图像保存和环绕相机控制。GPU 集成测试检查渐进采样确定性、连续相机与相机切换、尺寸变化、非均匀缩放、无面积光场景和失败上传后的状态。`--validation` 开启 Vulkan Validation Layer，错误会使测试失败。在 NVIDIA RTX 环境配置 `-DCAUSTRA_DLSS_GPU_TESTS=ON` 可将 DLSS 实际执行、升采样、配置切换、运动历史和历史重置加入 CTest，并启用同步验证。
 
 当前实现以清晰的核心接口和可运行性为优先：GPU 提交同步执行，输入/输出使用主机可见 coherent buffer，每次调用线程独占，不提供并发渲染。示例按米级空间构建，射线偏移包含固定绝对项，暂不支持微米级场景或极端巨大坐标。非常高亮的自发光和小面积强光会增加采样方差；没有降噪时低采样图像有 Monte Carlo 噪声。粗糙度在着色时设有有限下限，第一阶段不支持理想镜面、透射、体积、纹理、HDR 环境贴图或 glTF 扩展材质。
 

@@ -1,5 +1,6 @@
 #include <caustra/renderer.hpp>
 #include "demo_scene.hpp"
+#include "../src/shader_types.hpp"
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -10,8 +11,33 @@ void verify(const caustra::Image& image) {
   for(auto p:image.pixels) { require(std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.z),"Nonfinite radiance"); require(p.x>=0 && p.y>=0 && p.z>=0,"Negative radiance"); energy+=p.x+p.y+p.z; }
   require(energy>0,"Black output");
 }
+void verifyCameraProjection() {
+  auto pixel=[](const caustra::Matrix4& matrix,caustra::Float4 point) -> caustra::Float4 {
+    const float x=matrix[0]*point.x+matrix[1]*point.y+matrix[2]*point.z+matrix[3]*point.w;
+    const float y=matrix[4]*point.x+matrix[5]*point.y+matrix[6]*point.z+matrix[7]*point.w;
+    const float w=matrix[12]*point.x+matrix[13]*point.y+matrix[14]*point.z+matrix[15]*point.w;
+    return {(x/w+1)*100,(y/w+1)*50,0,0};
+  };
+  // A 90-degree vertical FOV at depth 2 covers [-4,4] horizontally and
+  // [-2,2] vertically. World Y increases towards the top output row.
+  caustra::Camera camera{{0,0,2,0},{0,0,0,0},{0,1,0,0},90};
+  auto previous=caustra::makeCameraTransforms(camera,200,100);
+  auto projected=pixel(previous.worldToClip,{1,1,0,1});
+  require(std::abs(projected.x-125)<1e-4f && std::abs(projected.y-25)<1e-4f,"Camera projection FOV/aspect/top-row convention");
+  camera.position.x=1; camera.target.x=1;
+  auto current=caustra::makeCameraTransforms(camera,200,100);
+  auto before=pixel(previous.worldToClip,{0,0,0,1}),after=pixel(current.worldToClip,{0,0,0,1});
+  require(std::abs(before.x-after.x-25)<1e-4f && std::abs(before.y-after.y)<1e-4f,"Rightward camera pan must give positive current-to-previous pixel motion");
+  before=pixel(previous.worldToClip,{0.2f,0.1f,-1,0}); after=pixel(current.worldToClip,{0.2f,0.1f,-1,0});
+  require(std::abs(before.x-after.x)<1e-4f && std::abs(before.y-after.y)<1e-4f,"Environment direction reprojection must ignore camera translation");
+  camera.verticalFov=53.130102f;
+  auto zoomed=caustra::makeCameraTransforms(camera,200,100);
+  after=pixel(zoomed.worldToClip,{2,1,0,1});
+  require(std::abs(after.x-150)<1e-4f && std::abs(after.y)<1e-4f,"Camera zoom reprojection must use the new projection");
+}
 int main(int argc,char**) {
   try {
+    verifyCameraProjection();
     caustra::Renderer renderer({argc>1});
     std::cout<<"GPU: "<<renderer.deviceName()<<'\n';
     caustra::RenderSettings settings; settings.width=48; settings.height=37; settings.maxBounces=5;
@@ -22,9 +48,20 @@ int main(int argc,char**) {
     require(split.samples==4,"Progressive sample counter");
     for(size_t i=0;i<split.pixels.size();++i) require(split.pixels[i].x==reference.pixels[i].x && split.pixels[i].y==reference.pixels[i].y && split.pixels[i].z==reference.pixels[i].z,"Split batches changed deterministic sequence");
     auto camera=caustra::example::makeDemoCamera(); camera.position.x+=0.3f; renderer.setCamera(camera);
-    require(renderer.sampleCount()==0,"Camera failed to reset accumulation"); renderer.render(2); verify(renderer.readback());
+    require(renderer.sampleCount()==0 && renderer.frameCount()==0,"Camera cut failed to reset accumulation and frame history"); renderer.render(2); verify(renderer.readback());
+    renderer.updateCamera(camera);
+    auto nearlySame=camera; nearlySame.position.x+=1e-8f; renderer.updateCamera(nearlySame);
+    require(renderer.sampleCount()==2 && renderer.frameCount()==2,"Unchanged continuous camera should preserve accumulation");
+    camera.position.x+=0.1f; renderer.updateCamera(camera);
+    require(renderer.sampleCount()==0 && renderer.frameCount()==2,"Continuous camera must clear raw samples while keeping the frame sequence");
+    renderer.render(1); verify(renderer.readback());
+    require(renderer.sampleCount()==1 && renderer.frameCount()==3,"Moving camera frame sequence failed to advance");
+    auto invalidCamera=camera; invalidCamera.target=invalidCamera.position;
+    bool rejectedCamera=false;
+    try { renderer.updateCamera(invalidCamera); } catch(const std::invalid_argument&) { rejectedCamera=true; }
+    require(rejectedCamera && renderer.sampleCount()==1 && renderer.frameCount()==3,"Rejected continuous camera must preserve renderer state");
     settings.width=31; settings.height=25; renderer.setSettings(settings);
-    require(renderer.sampleCount()==0,"Resize failed to reset accumulation"); renderer.render(2);
+    require(renderer.sampleCount()==0 && renderer.frameCount()==0,"Resize failed to reset accumulation and temporal history"); renderer.render(2);
     auto resized=renderer.readback(); require(resized.pixels.size()==31*25,"Resize image dimensions"); verify(resized);
     // No emissive light: tests empty-light dummy descriptor and BSDF-only environment.
     for(auto& material:scene.materials) material.emission={};
@@ -46,7 +83,7 @@ int main(int argc,char**) {
     renderer.setCamera({{0,0,2,0},{0,0,0,0},{0,1,0,0},45}); renderer.render(3);
     for(auto p:renderer.readback().pixels) require(std::abs(p.x-2)<1e-5f && std::abs(p.y-0.5f)<1e-5f && std::abs(p.z-1)<1e-5f,"Emitter radiance disagrees with analytic reference");
     require(renderer.validationErrorCount()==0,"Vulkan validation errors");
-    std::cout<<"GPU integration passed: analytic emitter, finite radiance, progressive determinism, camera/scene reset, resize, nonuniform scale, no lights, rejected upload.\n";
+    std::cout<<"GPU integration passed: analytic projection/emitter, finite radiance, progressive determinism, continuous camera, camera/scene reset, resize, nonuniform scale, no lights, rejected upload.\n";
     return 0;
   } catch(const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }
 }

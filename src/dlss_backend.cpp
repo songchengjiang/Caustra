@@ -50,6 +50,11 @@ void checkNgx(NVSDK_NGX_Result result, const char* operation) {
   }
 }
 
+void cleanupNgx(NVSDK_NGX_Result result, const char* operation) noexcept {
+  if(NVSDK_NGX_FAILED(result))
+    std::fprintf(stderr, "DLSS Ray Reconstruction: %s failed during cleanup (NGX 0x%x).\n", operation, unsigned(result));
+}
+
 void NVSDK_CONV ngxLog(const char* message, NVSDK_NGX_Logging_Level, NVSDK_NGX_Feature) {
   if(message) std::fprintf(stderr, "[NGX] %s\n", message);
 }
@@ -197,29 +202,49 @@ enum Resource : size_t { Color, Diffuse, Specular, NormalRoughness, Motion, Dept
 
 } // namespace
 
-struct DlssBackend::Impl {
+struct DlssSession::Impl {
   VkInstance instance{};
   VkPhysicalDevice physical{};
   VkDevice device{};
   bool initialized = false;
+  NVSDK_NGX_Parameter* capabilities{};
+
+  ~Impl() {
+    std::lock_guard lock(ngxMutex);
+    if(capabilities) cleanupNgx(NVSDK_NGX_VULKAN_DestroyParameters(capabilities), "destroy session capability parameters");
+    if(initialized) {
+      auto found = ngxUsers.find(device);
+      if(found != ngxUsers.end() && --found->second == 0) {
+        cleanupNgx(NVSDK_NGX_VULKAN_Shutdown1(device), "shut down NGX device session");
+        ngxUsers.erase(found);
+      }
+    }
+  }
+};
+
+struct DlssBackend::Impl {
+  // First member is destroyed last, after feature parameters and images.
+  std::shared_ptr<DlssSession> session;
+  VkPhysicalDevice physical{};
+  VkDevice device{};
   NVSDK_NGX_Parameter* parameters{};
   NVSDK_NGX_Handle* feature{};
   std::array<NgxImage, ResourceCount> images;
+  // The NGX parameter map retains pointers supplied by the evaluation helper.
+  // Keep wrappers and matrices alive until after feature/parameter destruction,
+  // rather than leaving stack addresses in that retained map.
+  std::array<NVSDK_NGX_Resource_VK, ResourceCount> resources{};
+  std::array<float,16> worldToView{}, viewToClip{};
   VkExtent2D input{}, output{};
 
   ~Impl() {
     // Renderer owns completion before teardown. Destroy the feature before its resources.
-    if(feature) NVSDK_NGX_VULKAN_ReleaseFeature(feature);
-    for(auto& image : images) image.clear();
-    std::lock_guard lock(ngxMutex);
-    if(parameters) NVSDK_NGX_VULKAN_DestroyParameters(parameters);
-    if(initialized) {
-      auto found = ngxUsers.find(device);
-      if(found != ngxUsers.end() && --found->second == 0) {
-        NVSDK_NGX_VULKAN_Shutdown1(device);
-        ngxUsers.erase(found);
-      }
+    if(feature) cleanupNgx(NVSDK_NGX_VULKAN_ReleaseFeature(feature), "release Ray Reconstruction feature");
+    {
+      std::lock_guard lock(ngxMutex);
+      if(parameters) cleanupNgx(NVSDK_NGX_VULKAN_DestroyParameters(parameters), "destroy feature parameters");
     }
+    for(auto& image : images) image.clear();
   }
 };
 
@@ -243,7 +268,7 @@ std::vector<std::string> DlssBackend::requiredDeviceExtensions(VkInstance instan
   return extensionNames(count, properties);
 }
 
-DlssBackend::DlssBackend(VkInstance instance, VkPhysicalDevice physical, VkDevice device) : impl_(std::make_unique<Impl>()) {
+DlssSession::DlssSession(VkInstance instance, VkPhysicalDevice physical, VkDevice device) : impl_(std::make_unique<Impl>()) {
   impl_->instance = instance;
   impl_->physical = physical;
   impl_->device = device;
@@ -256,13 +281,12 @@ DlssBackend::DlssBackend(VkInstance instance, VkPhysicalDevice physical, VkDevic
   common.LoggingInfo.MinimumLoggingLevel = NVSDK_NGX_LOGGING_LEVEL_OFF;
   const auto discovery = discoveryInfo(&common);
   std::lock_guard lock(ngxMutex);
-  NVSDK_NGX_FeatureRequirement requirements{};
-  checkNgx(NVSDK_NGX_VULKAN_GetFeatureRequirements(instance, physical, &discovery, &requirements), "query feature requirements");
-  if(requirements.FeatureSupported != NVSDK_NGX_FeatureSupportResult_Supported)
-    throw std::runtime_error("DLSS Ray Reconstruction is unsupported by the GPU/driver/OS (support flags " + std::to_string(unsigned(requirements.FeatureSupported)) + ").");
-
   auto found = ngxUsers.find(device);
   if(found == ngxUsers.end()) {
+    NVSDK_NGX_FeatureRequirement requirements{};
+    checkNgx(NVSDK_NGX_VULKAN_GetFeatureRequirements(instance, physical, &discovery, &requirements), "query feature requirements");
+    if(requirements.FeatureSupported != NVSDK_NGX_FeatureSupportResult_Supported)
+      throw std::runtime_error("DLSS Ray Reconstruction is unsupported by the GPU/driver/OS (support flags " + std::to_string(unsigned(requirements.FeatureSupported)) + ").");
 #ifdef CAUSTRA_DLSS_APPLICATION_ID
     checkNgx(NVSDK_NGX_VULKAN_Init(CAUSTRA_DLSS_APPLICATION_ID, dataPath().c_str(), instance, physical, device,
                                  vkGetInstanceProcAddr, vkGetDeviceProcAddr, &common), "initialize NGX");
@@ -275,19 +299,33 @@ DlssBackend::DlssBackend(VkInstance instance, VkPhysicalDevice physical, VkDevic
     ++found->second;
   }
   impl_->initialized = true;
-  checkNgx(NVSDK_NGX_VULKAN_GetCapabilityParameters(&impl_->parameters), "query capabilities");
-  if(!impl_->parameters) throw std::runtime_error("DLSS: NGX returned null capability parameters.");
+  checkNgx(NVSDK_NGX_VULKAN_GetCapabilityParameters(&impl_->capabilities), "query capabilities");
+  if(!impl_->capabilities) throw std::runtime_error("DLSS: NGX returned null capability parameters.");
 
   int needsDriver = 0;
-  if(NVSDK_NGX_SUCCEED(impl_->parameters->Get(NVSDK_NGX_Parameter_SuperSamplingDenoising_NeedsUpdatedDriver, &needsDriver)) && needsDriver) {
+  if(NVSDK_NGX_SUCCEED(impl_->capabilities->Get(NVSDK_NGX_Parameter_SuperSamplingDenoising_NeedsUpdatedDriver, &needsDriver)) && needsDriver) {
     unsigned major = 0, minor = 0;
-    impl_->parameters->Get(NVSDK_NGX_Parameter_SuperSamplingDenoising_MinDriverVersionMajor, &major);
-    impl_->parameters->Get(NVSDK_NGX_Parameter_SuperSamplingDenoising_MinDriverVersionMinor, &minor);
+    impl_->capabilities->Get(NVSDK_NGX_Parameter_SuperSamplingDenoising_MinDriverVersionMajor, &major);
+    impl_->capabilities->Get(NVSDK_NGX_Parameter_SuperSamplingDenoising_MinDriverVersionMinor, &minor);
     throw std::runtime_error("DLSS Ray Reconstruction requires a driver update (minimum " + std::to_string(major) + "." + std::to_string(minor) + ").");
   }
   int available = 0;
-  checkNgx(impl_->parameters->Get(NVSDK_NGX_Parameter_SuperSamplingDenoising_Available, &available), "query Ray Reconstruction availability");
+  checkNgx(impl_->capabilities->Get(NVSDK_NGX_Parameter_SuperSamplingDenoising_Available, &available), "query Ray Reconstruction availability");
   if(!available) throw std::runtime_error("DLSS Ray Reconstruction is unavailable. Check the NVIDIA driver and nvngx_dlssd runtime deployment.");
+}
+
+DlssSession::~DlssSession() = default;
+
+DlssBackend::DlssBackend(std::shared_ptr<DlssSession> session) : impl_(std::make_unique<Impl>()) {
+  if(!session) throw std::invalid_argument("DLSS backend requires an initialized device session.");
+  impl_->physical = session->impl_->physical;
+  impl_->device = session->impl_->device;
+  impl_->session = std::move(session);
+  std::lock_guard lock(ngxMutex);
+  // Each candidate has its own map so failed configuration cannot mutate an
+  // existing feature. The session remains alive across Off/On and candidates.
+  checkNgx(NVSDK_NGX_VULKAN_GetCapabilityParameters(&impl_->parameters), "allocate feature capability parameters");
+  if(!impl_->parameters) throw std::runtime_error("DLSS: NGX returned null feature parameters.");
 }
 
 DlssBackend::~DlssBackend() = default;
@@ -361,7 +399,7 @@ void DlssBackend::evaluate(VkCommandBuffer cmd, VkBuffer guides, VkBuffer output
 
   const VkDeviceSize pixels = VkDeviceSize(state.input.width) * state.input.height;
   constexpr std::array<uint32_t, Output> offsets{0, 16, 32, 48, 64, 72, 76};
-  std::array<NVSDK_NGX_Resource_VK, ResourceCount> resources{};
+  auto& resources = state.resources;
   for(size_t i = 0; i < Output; ++i) {
     auto& image = state.images[i];
     image.barrier(cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
@@ -399,14 +437,13 @@ void DlssBackend::evaluate(VkCommandBuffer cmd, VkBuffer guides, VkBuffer output
   // Caustra supplies conventional column-vector transforms in row-major memory.
   // NGX expects row-major matrices with the vector on the LEFT, so transpose the
   // mathematical transforms (translation lands in the final row).
-  std::array<float,16> viewCopy{}, projectionCopy{};
   for(size_t row = 0; row < 4; ++row)
     for(size_t column = 0; column < 4; ++column) {
-      viewCopy[4 * row + column] = view[4 * column + row];
-      projectionCopy[4 * row + column] = projection[4 * column + row];
+      state.worldToView[4 * row + column] = view[4 * column + row];
+      state.viewToClip[4 * row + column] = projection[4 * column + row];
     }
-  evaluate.pInWorldToViewMatrix = viewCopy.data();
-  evaluate.pInViewToClipMatrix = projectionCopy.data();
+  evaluate.pInWorldToViewMatrix = state.worldToView.data();
+  evaluate.pInViewToClipMatrix = state.viewToClip.data();
   checkNgx(NGX_VULKAN_EVALUATE_DLSSD_EXT(cmd, state.feature, state.parameters, &evaluate), "evaluate Ray Reconstruction");
 
   result.barrier(cmd, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);

@@ -1,7 +1,7 @@
 # Caustra renderer
 
-This is a standalone C++20/Vulkan Ray Query path-tracing library with a headless
-example. The user explicitly requested removing model import and other application
+This is a standalone C++20/Vulkan Ray Query path-tracing library with headless
+and Windows real-time viewer examples. The user explicitly requested removing model import and other application
 capabilities. The user subsequently requested DLSS Ray Reconstruction as an
 optional rendering-core feature. Keep model import, editor and rasterizer
 dependencies outside the renderer library. Future asset loaders belong outside it.
@@ -15,4 +15,6 @@ Build: cmake --preset windows; cmake --build --preset windows-release.
 Test: ctest --preset windows-release (GPU test requires Vulkan validation layer
 and ray-query hardware). See README for Linux presets and dependency overrides.
 Core methods are synchronous and single-thread owned. Reset accumulated samples
-whenever the camera, scene, material or integration settings change.
+whenever the camera, scene, material or integration settings change. `setCamera`
+is a full camera cut; `updateCamera` preserves DLSS history using camera motion
+vectors for static geometry. Keep window/input/presentation code in examples/.
