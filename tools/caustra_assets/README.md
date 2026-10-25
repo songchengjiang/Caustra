@@ -13,6 +13,19 @@ python -m venv build/asset-tools-env
 ./build/asset-tools-env/Scripts/python.exe tests/gallery_tests.py -v
 ```
 
+For the official San Miguel scene, use the separate pinned downloader and
+offline PBRT adapter documented in [docs/sanmiguel.md](../../docs/sanmiguel.md).
+They generate editable USD/MaterialX with native instances, original texture
+copies, and explicit material/environment adaptation reports.
+
+`--texture-max-size N` limits runtime texture dimensions (0 keeps originals).
+Filtering averages linear RGB/alpha samples; it does not change source USD or
+images. Native USD instances share geometry when effective materials, UVs and
+displacement permit it; world-dependent displacement retains transform-specific
+geometry. Vertex reuse preserves authored normal/UV interpolation boundaries.
+`caustra:environmentBackdrop = true` on a mesh preserves its rendered geometry
+while excluding it from orbit/framing bounds when ordinary scene geometry exists.
+
 Gallery regressions use the checked-in
 [`materialx_official_inventory.json`](../../tests/assets/materialx_official_inventory.json)
 as an independent coverage reference: 50 original MaterialX files with SHA256,
@@ -130,3 +143,12 @@ also expand version 1 materials with zero-weight defaults for the new lobes. It
 contains POD scene data, material programs and texture pixels, with no external
 paths. A compiled asset can be moved independently of its source USD, MaterialX
 and image files. Packages larger than 2 GiB are rejected by the reader.
+
+The six parameterized surface models now use official MaterialX 1.39.5 Slang
+ShaderGen output in `shaders/generated/`. This does not change the package ABI
+or make arbitrary parameter graphs supported: the current numeric IR still
+evaluates texture and connected inputs at each hit. Sampling/PDF and physical
+dielectric/SSS/volume transport remain renderer responsibilities. Regenerate or
+audit with `tools/generate_materialx_surfaces.py [--check]` using the pinned
+source tree; normal C++ builds consume the checked-in output without an SDK.
+See [backend scope and validation](../../docs/materialx_backend.md).

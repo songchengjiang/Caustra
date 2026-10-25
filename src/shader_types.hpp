@@ -2,24 +2,52 @@
 #include <caustra/renderer.hpp>
 #include <cmath>
 #include <cstddef>
+#include <algorithm>
+#include <stdexcept>
 
 namespace caustra {
 struct GpuInstance {
   Uint4 offsets; // vertex offset, index offset, material index, heterogeneous grid base row (0 if absent)
   std::array<Float4,3> worldToObject, objectToWorld;
-  Float4 objectMin, objectMax;
+  Float4 objectMin, objectMax; // xyz bounds; objectMin.w bit-casts the first emitter triangle index (UINT32_MAX if absent)
 };
 struct GpuLight {
   Float4 v0; // xyz world-space vertex; w = triangle area
-  Float4 edge1; // xyz edge; w = cumulative area
+  Float4 edge1; // xyz edge; w = exact cumulative 24-bit selection tickets
   Float4 edge2; // xyz edge; w = instance orientation sign for outward emission
   Uint4 source; // global vertex indices and material index
-  Float4 normal0, normal1, normal2; // inverse-transposed world-space normals
+  Float4 normal0, normal1, normal2; // xyz inverse-transposed normals; normal0.w bit-casts source instance index
   Float4 tangent0, tangent1, tangent2; // world tangents, mirrored handedness in w
 };
+inline constexpr uint32_t kLightSelectionTickets=1u<<24;
+
+// Integer-valued floats remain exact through 2^24. Reserve one uniform RNG
+// ticket for every triangle, then distribute the remainder by double-precision
+// area*radiance weights. Small positive lights cannot disappear behind a large
+// cumulative float value. Both MIS paths use actual adjacent CDF differences,
+// rather than the unquantized proposal weights, so this floor does not bias L.
+inline void buildLightCdf(std::vector<GpuLight>& lights,const std::vector<double>& weights) {
+  if(lights.size()!=weights.size() || lights.size()>=kLightSelectionTickets)
+    throw std::invalid_argument("Emitter distribution exceeds the 24-bit selection ticket capacity");
+  double total=0;
+  for(double weight:weights) {
+    if(!(weight>0) || !std::isfinite(weight)) throw std::invalid_argument("Invalid emitter sampling weight");
+    total+=weight;
+  }
+  if(!std::isfinite(total)) throw std::invalid_argument("Emitter sampling weight sum is not finite");
+  double cumulative=0;const auto remaining=kLightSelectionTickets-static_cast<uint32_t>(lights.size());
+  for(size_t i=0;i<lights.size();++i) {
+    cumulative+=weights[i];
+    const uint32_t proportional=static_cast<uint32_t>(std::floor(std::min(1.0,cumulative/total)*remaining));
+    lights[i].edge1.w=float(i+1+proportional);
+  }
+  if(!lights.empty()) lights.back().edge1.w=float(kLightSelectionTickets);
+}
 struct GpuTextureInfo { Uint4 size; }; // width, height, base texel, mip count
 inline constexpr uint32_t kMediumStackCapacity = 16;
 inline constexpr uint32_t kCameraHistoryValid = 1u;
+inline constexpr uint32_t kSkipInvalidMediumPath = 1u << 1;
+inline constexpr size_t kRenderDiagnosticWords = 20;
 inline constexpr uint32_t kInitCameraMedium = 1u << 31;
 inline constexpr uint32_t kInitMaterialMedium = 1u << 30;
 inline constexpr uint32_t kInitHeterogeneousMedium = 1u << 29;
@@ -36,15 +64,15 @@ struct alignas(16) GpuMaterialMediumData {
 // Binding 13 holds containment only. Per-path stacks use these instance IDs to
 // look up the shared coefficients without copying them into thread-local arrays.
 struct alignas(16) GpuCameraMediumCache {
-  Uint4 header; // count, contains dispersion, initialized, reserved
+  Uint4 header; // count, contains dispersion, state (0 unset/1 valid/2 failed probe), error flags
   std::array<Uint4, kMediumStackCapacity / 4> instances;
 };
 struct PushConstants {
   Float4 origin, lowerLeft, horizontal, vertical;
   Float4 environment; // RGB constant radiance; w enables medium boundary handling
   Uint4 dimensions; // width, height, first sample, max bounces
-  Uint4 counts; // light count, DLSS enabled, random frame sequence, flags (history 0, material init 30, camera init 31)
-  Float4 params; // total light area, ray epsilon, jitter X, jitter Y (input pixels)
+  Uint4 counts; // light count, DLSS enabled, random frame sequence, flags (history 0, skip invalid medium 1, init 29..31)
+  Float4 params; // total light selection tickets, guide/depth floor, jitter X, jitter Y (input pixels)
 };
 using Matrix4 = std::array<float, 16>;
 struct alignas(16) GpuCameraHistory {
@@ -52,6 +80,7 @@ struct alignas(16) GpuCameraHistory {
   // so NDC (-1,-1) maps to the top-left input pixel; no temporal jitter here.
   Matrix4 currentWorldToClip;
   Matrix4 previousWorldToClip;
+  Float4 transport; // x: mismatched medium boundary tolerance in meters; yzw reserved
 };
 struct CameraTransforms { Matrix4 view, projection, worldToClip; };
 
@@ -92,5 +121,5 @@ static_assert(sizeof(GpuMaterialMediumData) == 128 && offsetof(GpuMaterialMedium
 static_assert(sizeof(GpuCameraMediumCache) == 80 && offsetof(GpuCameraMediumCache,instances) == 16);
 static_assert(sizeof(GpuInstance) == 144 && sizeof(GpuLight) == 160);
 static_assert(sizeof(PushConstants) == 128);
-static_assert(sizeof(GpuCameraHistory) == 128);
+static_assert(sizeof(GpuCameraHistory) == 144 && offsetof(GpuCameraHistory,transport) == 128);
 } // namespace caustra

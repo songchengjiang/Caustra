@@ -98,6 +98,7 @@ class TextureStore:
     def __init__(self,asset):
         self.asset=asset
         self.cache={}
+        self.max_size=0 # Explicit runtime-package limit; source USD/images stay intact.
 
     def add(self,path,space):
         space=color_space(space)
@@ -115,9 +116,17 @@ class TextureStore:
             raise AssetError("Cannot load texture %s: %s" % (path,error)) from error
         if space=="srgb": pixels[...,:3]=srgb_to_linear(pixels[...,:3])
         if not np.isfinite(pixels).all(): raise AssetError("Texture contains nonfinite values: "+str(path))
+        if self.max_size and max(pixels.shape[:2])>self.max_size:
+            height,width=pixels.shape[:2]
+            ratio=self.max_size/max(width,height)
+            size=(max(1,round(width*ratio)),max(1,round(height*ratio)))
+            # Average linear samples, including alpha, rather than filtering
+            # sRGB code values. Float planes retain HDR/data-map precision.
+            pixels=np.stack([np.asarray(Image.fromarray(pixels[...,i]).resize(size,Image.Resampling.BOX),dtype=np.float32)
+                             for i in range(4)],axis=-1)
         height,width=pixels.shape[:2]
         index=len(self.asset.textures)
-        self.asset.textures.append(Texture(width,height,pixels.reshape(-1,4).tolist()))
+        self.asset.textures.append(Texture(width,height,pixels.reshape(-1,4) if self.max_size else pixels.reshape(-1,4).tolist()))
         self.cache[key]=index
         return index
 

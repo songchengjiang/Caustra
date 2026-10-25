@@ -17,6 +17,10 @@
 [[vk::binding(14, 0)]] RWStructuredBuffer<uint4> materialMediumTable;
 static const uint MEDIUM_STACK_CAPACITY = 16;
 static const uint MEDIUM_PROBE_LIMIT = 4096;
+// Bound anomalous coincident contacts even when several open/overlapping
+// instances repeatedly report the same ray parameter. Normal crossings do not
+// consume this budget, nor do these skipped contacts consume a scattering bounce.
+static const uint MEDIUM_CONTACT_LIMIT = 64;
 static const uint MEDIUM_NO_HERO = 3;
 struct MediumCoefficients
 {
@@ -129,7 +133,11 @@ float3 mediumFlightPoint(RayDesc ray, float3 segmentStart, MediumBoundaryProgres
   return point;
 }
 
-void mediumError(uint bits) { InterlockedOr(renderErrors[0], bits); }
+void mediumError(uint bits)
+{
+  InterlockedOr(renderErrors[0], bits);
+  if((bits & 2u) != 0) InterlockedAdd(renderErrors[16], 1u);
+}
 void mediumBoundaryError(MediumStack stack,SurfaceHit hit,uint site,float3 origin,float3 direction,uint source)
 {
   uint previous;
@@ -428,6 +436,26 @@ bool mediumCross(inout MediumStack stack, SurfaceHit hit, GpuMaterial material,u
   return true;
 }
 
+// A tolerance applies only after proving a stack mismatch. Do not erase valid
+// thin solids or repair the stack by guessing which interior a ray occupies.
+// Call at a traced endpoint, never at the source of a sampled light connection:
+// that source carries the distance of an unrelated incoming ray.
+bool skipNearMediumBoundary(MediumStack stack, SurfaceHit hit, GpuMaterial material, float segmentLength)
+{
+  if((pc.counts.w & SKIP_INVALID_MEDIUM_PATH) == 0 || cameraHistory.transport.x <= 0.0f ||
+     segmentLength > cameraHistory.transport.x || !materialHasInterior(material)) return false;
+  bool mismatch = stack.count == 0 || stack.entries[stack.count - 1] != hit.instanceIndex;
+  if(hit.frontFacing)
+  {
+    mismatch = false;
+    for(uint index = 0; index < stack.count; ++index)
+      if(stack.entries[index] == hit.instanceIndex) { mismatch = true; break; }
+  }
+  if(!mismatch) return false;
+  InterlockedAdd(renderErrors[17], 1u);
+  return true;
+}
+
 float destinationMediumIor(MediumStack stack, SurfaceHit hit, uint hero)
 {
   // Called only for an actual solid optical interior. Thin surfaces and null
@@ -503,7 +531,13 @@ void initializeCameraMediumCache()
   cameraMediumCache[0] = uint4(0);
   MediumStack stack = (MediumStack)0;
   if(pc.environment.w > 0.0f) stack = initialMediumStack(pc.origin.xyz);
-  if(renderErrors[0] != 0) return;
+  if(renderErrors[0] != 0)
+  {
+    // Retain an explicit failed state across frames. Paths must not consume
+    // the partial probe result, assume air, or turn a boundary error into NaNs.
+    cameraMediumCache[0] = uint4(0, 0, 2, renderErrors[0]);
+    return;
+  }
   uint dispersive = 0;
   for(uint row = 0; row < MEDIUM_STACK_CAPACITY / 4; ++row)
   {
@@ -522,14 +556,15 @@ void initializeCameraMediumCache()
   cameraMediumCache[0] = uint4(stack.count, dispersive, 1, 0);
 }
 
-MediumStack loadCameraMediumStack(inout uint seed, inout uint hero)
+bool loadCameraMediumStack(inout uint seed, inout uint hero, out MediumStack stack)
 {
-  MediumStack stack = (MediumStack)0;
+  stack = (MediumStack)0;
   uint4 header = cameraMediumCache[0];
+  if(header.z == 2) return false;
   if(header.z != 1 || header.x > MEDIUM_STACK_CAPACITY)
   {
     mediumError(4);
-    return stack;
+    return false;
   }
   stack.count = header.x;
   for(uint index = 0; index < stack.count; ++index)
@@ -538,7 +573,7 @@ MediumStack loadCameraMediumStack(inout uint seed, inout uint hero)
   // remains per path. It consumes exactly the RNG draw used by the old probe.
   if(hero == MEDIUM_NO_HERO && header.y != 0)
     hero = min(uint(rand(seed) * 3.0f), 2);
-  return stack;
+  return true;
 }
 
 float3 mediumTransmittance(MediumCoefficients m, float distance)

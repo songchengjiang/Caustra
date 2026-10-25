@@ -18,6 +18,10 @@ NVIDIA notices in third_party/nvshaders; record any modifications there.
 Material IR opcodes/layouts must also match tools/caustra_assets/model.py and
 shaders/material_program.slang. Keep native OpenPBR and Standard Surface model
 semantics distinct. Preserve MaterialX/Aurora licenses and provenance records.
+Ordinary surface reflection and EDF use official ShaderGen output in
+shaders/generated; regenerate with tools/generate_materialx_surfaces.py instead
+of editing generated math. Preserve raw per-hit inputs separately from sampling
+frames. Real dielectric/SSS/volume transport remains an explicit core adapter.
 
 Build: cmake --preset windows; cmake --build --preset windows-release.
 Test: ctest --preset windows-release (GPU test requires Vulkan validation layer
@@ -26,3 +30,8 @@ Core methods are synchronous and single-thread owned. Reset accumulated samples
 whenever the camera, scene, material or integration settings change. `setCamera`
 is a full camera cut; `updateCamera` preserves DLSS history using camera motion
 vectors for static geometry. Keep window/input/presentation code in examples/.
+The viewer presents GPU HDR through examples/vulkan_presenter.* and a compute
+display transform. Do not restore per-frame HDR readback or CPU image display.
+Optional Vulkan interop lives in include/caustra/vulkan.hpp; borrowed output must
+finish GPU consumption before renderer mutations. Keep headless defaults free of
+surface/swapchain requirements. Raw and DLSS readbacks are explicit and cached.

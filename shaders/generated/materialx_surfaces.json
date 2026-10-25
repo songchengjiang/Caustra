@@ -1,0 +1,3028 @@
+{
+  "materialx_version": "1.39.5",
+  "generator": "MaterialXGenSlang.SlangShaderGenerator",
+  "models": [
+    {
+      "id": 0,
+      "name": "standard_surface",
+      "nodedef": "ND_standard_surface_surfaceshader",
+      "nodegraph": "NG_standard_surface_surfaceshader_100",
+      "artifact": "materialx_standard_surface.slang",
+      "artifact_sha256": "a40ac994603bb3d3a1132c0e873e82456ae3304074559ce4fe15f26e92e43595",
+      "inputs": [
+        {
+          "name": "base",
+          "type": "float",
+          "expression": "m.factors.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "base_color",
+          "type": "color3",
+          "expression": "m.baseColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "diffuse_roughness",
+          "type": "float",
+          "expression": "m.factors.y",
+          "closure": "BSDF"
+        },
+        {
+          "name": "metalness",
+          "type": "float",
+          "expression": "m.surface.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "specular",
+          "type": "float",
+          "expression": "m.specular.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "specular_color",
+          "type": "color3",
+          "expression": "m.specularColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "specular_roughness",
+          "type": "float",
+          "expression": "max(m.surface.y, 0.02)",
+          "closure": "BSDF"
+        },
+        {
+          "name": "specular_IOR",
+          "type": "float",
+          "expression": "m.specular.y",
+          "closure": "BSDF"
+        },
+        {
+          "name": "specular_anisotropy",
+          "type": "float",
+          "expression": "m.specular.z",
+          "closure": "BSDF"
+        },
+        {
+          "name": "specular_rotation",
+          "type": "float",
+          "expression": "m.specular.w",
+          "closure": "BSDF"
+        },
+        {
+          "name": "transmission",
+          "type": "float",
+          "expression": "m.transmission.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "transmission_color",
+          "type": "color3",
+          "expression": "m.transmissionColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "transmission_depth",
+          "type": "float",
+          "expression": "m.transmission.y",
+          "closure": "BSDF"
+        },
+        {
+          "name": "transmission_scatter",
+          "type": "color3",
+          "expression": "m.transmissionScatter.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "transmission_scatter_anisotropy",
+          "type": "float",
+          "expression": "m.transmission.z",
+          "closure": "BSDF"
+        },
+        {
+          "name": "transmission_dispersion",
+          "type": "float",
+          "expression": "0.0",
+          "closure": "BSDF"
+        },
+        {
+          "name": "transmission_extra_roughness",
+          "type": "float",
+          "expression": "m.transmission.w",
+          "closure": "BSDF"
+        },
+        {
+          "name": "subsurface",
+          "type": "float",
+          "expression": "m.subsurface.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "subsurface_color",
+          "type": "color3",
+          "expression": "m.subsurfaceColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "subsurface_radius",
+          "type": "color3",
+          "expression": "m.subsurfaceRadius.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "subsurface_scale",
+          "type": "float",
+          "expression": "m.subsurface.y",
+          "closure": "BSDF"
+        },
+        {
+          "name": "subsurface_anisotropy",
+          "type": "float",
+          "expression": "m.subsurface.z",
+          "closure": "BSDF"
+        },
+        {
+          "name": "sheen",
+          "type": "float",
+          "expression": "m.sheen.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "sheen_color",
+          "type": "color3",
+          "expression": "m.sheenColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "sheen_roughness",
+          "type": "float",
+          "expression": "m.sheen.y",
+          "closure": "BSDF"
+        },
+        {
+          "name": "coat",
+          "type": "float",
+          "expression": "m.coat.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "coat_color",
+          "type": "color3",
+          "expression": "m.coatColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "coat_roughness",
+          "type": "float",
+          "expression": "max(m.coat.y, 0.02)",
+          "closure": "BSDF"
+        },
+        {
+          "name": "coat_anisotropy",
+          "type": "float",
+          "expression": "m.coat.w",
+          "closure": "BSDF"
+        },
+        {
+          "name": "coat_rotation",
+          "type": "float",
+          "expression": "m.fuzz.z",
+          "closure": "BSDF"
+        },
+        {
+          "name": "coat_IOR",
+          "type": "float",
+          "expression": "m.coat.z",
+          "closure": "BSDF"
+        },
+        {
+          "name": "coat_normal",
+          "type": "vector3",
+          "expression": "coatNormal",
+          "closure": "BSDF"
+        },
+        {
+          "name": "coat_affect_color",
+          "type": "float",
+          "expression": "m.fuzz.w",
+          "closure": "BSDF"
+        },
+        {
+          "name": "coat_affect_roughness",
+          "type": "float",
+          "expression": "m.volume.w",
+          "closure": "BSDF"
+        },
+        {
+          "name": "thin_film_thickness",
+          "type": "float",
+          "expression": "m.thinFilm.y",
+          "closure": "BSDF"
+        },
+        {
+          "name": "thin_film_IOR",
+          "type": "float",
+          "expression": "m.thinFilm.z",
+          "closure": "BSDF"
+        },
+        {
+          "name": "emission",
+          "type": "float",
+          "expression": "1.0",
+          "closure": "BSDF"
+        },
+        {
+          "name": "emission_color",
+          "type": "color3",
+          "expression": "m.emission.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "opacity",
+          "type": "color3",
+          "expression": "float3(m.factors.z)",
+          "closure": "BSDF"
+        },
+        {
+          "name": "thin_walled",
+          "type": "boolean",
+          "expression": "(m.subsurface.w > 0.5)",
+          "closure": "BSDF"
+        },
+        {
+          "name": "normal",
+          "type": "vector3",
+          "expression": "normal",
+          "closure": "BSDF"
+        },
+        {
+          "name": "tangent",
+          "type": "vector3",
+          "expression": "tangent",
+          "closure": "BSDF"
+        },
+        {
+          "name": "caustra_coat_tangent",
+          "type": "vector3",
+          "expression": "coatTangent",
+          "closure": "BSDF"
+        },
+        {
+          "name": "base",
+          "type": "float",
+          "expression": "m.factors.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "base_color",
+          "type": "color3",
+          "expression": "m.baseColor.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "diffuse_roughness",
+          "type": "float",
+          "expression": "m.factors.y",
+          "closure": "EDF"
+        },
+        {
+          "name": "metalness",
+          "type": "float",
+          "expression": "m.surface.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "specular",
+          "type": "float",
+          "expression": "m.specular.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "specular_color",
+          "type": "color3",
+          "expression": "m.specularColor.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "specular_roughness",
+          "type": "float",
+          "expression": "max(m.surface.y, 0.02)",
+          "closure": "EDF"
+        },
+        {
+          "name": "specular_IOR",
+          "type": "float",
+          "expression": "m.specular.y",
+          "closure": "EDF"
+        },
+        {
+          "name": "specular_anisotropy",
+          "type": "float",
+          "expression": "m.specular.z",
+          "closure": "EDF"
+        },
+        {
+          "name": "specular_rotation",
+          "type": "float",
+          "expression": "m.specular.w",
+          "closure": "EDF"
+        },
+        {
+          "name": "transmission",
+          "type": "float",
+          "expression": "m.transmission.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "transmission_color",
+          "type": "color3",
+          "expression": "m.transmissionColor.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "transmission_depth",
+          "type": "float",
+          "expression": "m.transmission.y",
+          "closure": "EDF"
+        },
+        {
+          "name": "transmission_scatter",
+          "type": "color3",
+          "expression": "m.transmissionScatter.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "transmission_scatter_anisotropy",
+          "type": "float",
+          "expression": "m.transmission.z",
+          "closure": "EDF"
+        },
+        {
+          "name": "transmission_dispersion",
+          "type": "float",
+          "expression": "0.0",
+          "closure": "EDF"
+        },
+        {
+          "name": "transmission_extra_roughness",
+          "type": "float",
+          "expression": "m.transmission.w",
+          "closure": "EDF"
+        },
+        {
+          "name": "subsurface",
+          "type": "float",
+          "expression": "m.subsurface.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "subsurface_color",
+          "type": "color3",
+          "expression": "m.subsurfaceColor.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "subsurface_radius",
+          "type": "color3",
+          "expression": "m.subsurfaceRadius.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "subsurface_scale",
+          "type": "float",
+          "expression": "m.subsurface.y",
+          "closure": "EDF"
+        },
+        {
+          "name": "subsurface_anisotropy",
+          "type": "float",
+          "expression": "m.subsurface.z",
+          "closure": "EDF"
+        },
+        {
+          "name": "sheen",
+          "type": "float",
+          "expression": "m.sheen.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "sheen_color",
+          "type": "color3",
+          "expression": "m.sheenColor.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "sheen_roughness",
+          "type": "float",
+          "expression": "m.sheen.y",
+          "closure": "EDF"
+        },
+        {
+          "name": "coat",
+          "type": "float",
+          "expression": "m.coat.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "coat_color",
+          "type": "color3",
+          "expression": "m.coatColor.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "coat_roughness",
+          "type": "float",
+          "expression": "max(m.coat.y, 0.02)",
+          "closure": "EDF"
+        },
+        {
+          "name": "coat_anisotropy",
+          "type": "float",
+          "expression": "m.coat.w",
+          "closure": "EDF"
+        },
+        {
+          "name": "coat_rotation",
+          "type": "float",
+          "expression": "m.fuzz.z",
+          "closure": "EDF"
+        },
+        {
+          "name": "coat_IOR",
+          "type": "float",
+          "expression": "m.coat.z",
+          "closure": "EDF"
+        },
+        {
+          "name": "coat_normal",
+          "type": "vector3",
+          "expression": "coatNormal",
+          "closure": "EDF"
+        },
+        {
+          "name": "coat_affect_color",
+          "type": "float",
+          "expression": "m.fuzz.w",
+          "closure": "EDF"
+        },
+        {
+          "name": "coat_affect_roughness",
+          "type": "float",
+          "expression": "m.volume.w",
+          "closure": "EDF"
+        },
+        {
+          "name": "thin_film_thickness",
+          "type": "float",
+          "expression": "m.thinFilm.y",
+          "closure": "EDF"
+        },
+        {
+          "name": "thin_film_IOR",
+          "type": "float",
+          "expression": "m.thinFilm.z",
+          "closure": "EDF"
+        },
+        {
+          "name": "emission",
+          "type": "float",
+          "expression": "1.0",
+          "closure": "EDF"
+        },
+        {
+          "name": "emission_color",
+          "type": "color3",
+          "expression": "m.emission.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "opacity",
+          "type": "color3",
+          "expression": "float3(m.factors.z)",
+          "closure": "EDF"
+        },
+        {
+          "name": "thin_walled",
+          "type": "boolean",
+          "expression": "(m.subsurface.w > 0.5)",
+          "closure": "EDF"
+        },
+        {
+          "name": "normal",
+          "type": "vector3",
+          "expression": "normal",
+          "closure": "EDF"
+        },
+        {
+          "name": "tangent",
+          "type": "vector3",
+          "expression": "tangent",
+          "closure": "EDF"
+        },
+        {
+          "name": "caustra_coat_tangent",
+          "type": "vector3",
+          "expression": "coatTangent",
+          "closure": "EDF"
+        }
+      ],
+      "has_emission": true,
+      "emission_adapter": null
+    },
+    {
+      "id": 1,
+      "name": "open_pbr_surface",
+      "nodedef": "ND_open_pbr_surface_surfaceshader",
+      "nodegraph": "NG_open_pbr_surface_surfaceshader",
+      "artifact": "materialx_open_pbr_surface.slang",
+      "artifact_sha256": "88e690e2ddd55a7b6a382dca92ea05a37607a2b3235fe0d14b14b09b55c94d1b",
+      "inputs": [
+        {
+          "name": "base_weight",
+          "type": "float",
+          "expression": "m.factors.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "base_color",
+          "type": "color3",
+          "expression": "m.baseColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "base_diffuse_roughness",
+          "type": "float",
+          "expression": "m.factors.y",
+          "closure": "BSDF"
+        },
+        {
+          "name": "base_metalness",
+          "type": "float",
+          "expression": "m.surface.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "specular_weight",
+          "type": "float",
+          "expression": "m.specular.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "specular_color",
+          "type": "color3",
+          "expression": "m.specularColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "specular_roughness",
+          "type": "float",
+          "expression": "max(m.surface.y, 0.02)",
+          "closure": "BSDF"
+        },
+        {
+          "name": "specular_ior",
+          "type": "float",
+          "expression": "m.specular.y",
+          "closure": "BSDF"
+        },
+        {
+          "name": "specular_roughness_anisotropy",
+          "type": "float",
+          "expression": "m.specular.z",
+          "closure": "BSDF"
+        },
+        {
+          "name": "transmission_weight",
+          "type": "float",
+          "expression": "m.transmission.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "transmission_color",
+          "type": "color3",
+          "expression": "m.transmissionColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "transmission_depth",
+          "type": "float",
+          "expression": "m.transmission.y",
+          "closure": "BSDF"
+        },
+        {
+          "name": "transmission_scatter",
+          "type": "color3",
+          "expression": "m.transmissionScatter.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "transmission_scatter_anisotropy",
+          "type": "float",
+          "expression": "m.transmission.z",
+          "closure": "BSDF"
+        },
+        {
+          "name": "transmission_dispersion_scale",
+          "type": "float",
+          "expression": "0.0",
+          "closure": "BSDF"
+        },
+        {
+          "name": "transmission_dispersion_abbe_number",
+          "type": "float",
+          "expression": "20.0",
+          "closure": "BSDF"
+        },
+        {
+          "name": "subsurface_weight",
+          "type": "float",
+          "expression": "m.subsurface.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "subsurface_color",
+          "type": "color3",
+          "expression": "m.subsurfaceColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "subsurface_radius",
+          "type": "float",
+          "expression": "m.subsurface.y",
+          "closure": "BSDF"
+        },
+        {
+          "name": "subsurface_radius_scale",
+          "type": "color3",
+          "expression": "m.subsurfaceRadius.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "subsurface_scatter_anisotropy",
+          "type": "float",
+          "expression": "m.subsurface.z",
+          "closure": "BSDF"
+        },
+        {
+          "name": "fuzz_weight",
+          "type": "float",
+          "expression": "m.fuzz.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "fuzz_color",
+          "type": "color3",
+          "expression": "m.fuzzColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "fuzz_roughness",
+          "type": "float",
+          "expression": "m.fuzz.y",
+          "closure": "BSDF"
+        },
+        {
+          "name": "coat_weight",
+          "type": "float",
+          "expression": "m.coat.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "coat_color",
+          "type": "color3",
+          "expression": "m.coatColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "coat_roughness",
+          "type": "float",
+          "expression": "max(m.coat.y, 0.02)",
+          "closure": "BSDF"
+        },
+        {
+          "name": "coat_roughness_anisotropy",
+          "type": "float",
+          "expression": "m.coat.w",
+          "closure": "BSDF"
+        },
+        {
+          "name": "coat_ior",
+          "type": "float",
+          "expression": "m.coat.z",
+          "closure": "BSDF"
+        },
+        {
+          "name": "coat_darkening",
+          "type": "float",
+          "expression": "m.factors.w",
+          "closure": "BSDF"
+        },
+        {
+          "name": "thin_film_weight",
+          "type": "float",
+          "expression": "m.thinFilm.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "thin_film_thickness",
+          "type": "float",
+          "expression": "m.thinFilm.y * 0.001",
+          "closure": "BSDF"
+        },
+        {
+          "name": "thin_film_ior",
+          "type": "float",
+          "expression": "m.thinFilm.z",
+          "closure": "BSDF"
+        },
+        {
+          "name": "emission_luminance",
+          "type": "float",
+          "expression": "1.0",
+          "closure": "BSDF"
+        },
+        {
+          "name": "emission_color",
+          "type": "color3",
+          "expression": "m.emission.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "geometry_opacity",
+          "type": "float",
+          "expression": "m.factors.z",
+          "closure": "BSDF"
+        },
+        {
+          "name": "geometry_thin_walled",
+          "type": "boolean",
+          "expression": "(m.subsurface.w > 0.5)",
+          "closure": "BSDF"
+        },
+        {
+          "name": "geometry_normal",
+          "type": "vector3",
+          "expression": "normal",
+          "closure": "BSDF"
+        },
+        {
+          "name": "geometry_coat_normal",
+          "type": "vector3",
+          "expression": "coatNormal",
+          "closure": "BSDF"
+        },
+        {
+          "name": "geometry_tangent",
+          "type": "vector3",
+          "expression": "tangent",
+          "closure": "BSDF"
+        },
+        {
+          "name": "geometry_coat_tangent",
+          "type": "vector3",
+          "expression": "coatTangent",
+          "closure": "BSDF"
+        },
+        {
+          "name": "base_weight",
+          "type": "float",
+          "expression": "m.factors.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "base_color",
+          "type": "color3",
+          "expression": "m.baseColor.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "base_diffuse_roughness",
+          "type": "float",
+          "expression": "m.factors.y",
+          "closure": "EDF"
+        },
+        {
+          "name": "base_metalness",
+          "type": "float",
+          "expression": "m.surface.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "specular_weight",
+          "type": "float",
+          "expression": "m.specular.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "specular_color",
+          "type": "color3",
+          "expression": "m.specularColor.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "specular_roughness",
+          "type": "float",
+          "expression": "max(m.surface.y, 0.02)",
+          "closure": "EDF"
+        },
+        {
+          "name": "specular_ior",
+          "type": "float",
+          "expression": "m.specular.y",
+          "closure": "EDF"
+        },
+        {
+          "name": "specular_roughness_anisotropy",
+          "type": "float",
+          "expression": "m.specular.z",
+          "closure": "EDF"
+        },
+        {
+          "name": "transmission_weight",
+          "type": "float",
+          "expression": "m.transmission.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "transmission_color",
+          "type": "color3",
+          "expression": "m.transmissionColor.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "transmission_depth",
+          "type": "float",
+          "expression": "m.transmission.y",
+          "closure": "EDF"
+        },
+        {
+          "name": "transmission_scatter",
+          "type": "color3",
+          "expression": "m.transmissionScatter.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "transmission_scatter_anisotropy",
+          "type": "float",
+          "expression": "m.transmission.z",
+          "closure": "EDF"
+        },
+        {
+          "name": "transmission_dispersion_scale",
+          "type": "float",
+          "expression": "0.0",
+          "closure": "EDF"
+        },
+        {
+          "name": "transmission_dispersion_abbe_number",
+          "type": "float",
+          "expression": "20.0",
+          "closure": "EDF"
+        },
+        {
+          "name": "subsurface_weight",
+          "type": "float",
+          "expression": "m.subsurface.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "subsurface_color",
+          "type": "color3",
+          "expression": "m.subsurfaceColor.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "subsurface_radius",
+          "type": "float",
+          "expression": "m.subsurface.y",
+          "closure": "EDF"
+        },
+        {
+          "name": "subsurface_radius_scale",
+          "type": "color3",
+          "expression": "m.subsurfaceRadius.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "subsurface_scatter_anisotropy",
+          "type": "float",
+          "expression": "m.subsurface.z",
+          "closure": "EDF"
+        },
+        {
+          "name": "fuzz_weight",
+          "type": "float",
+          "expression": "m.fuzz.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "fuzz_color",
+          "type": "color3",
+          "expression": "m.fuzzColor.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "fuzz_roughness",
+          "type": "float",
+          "expression": "m.fuzz.y",
+          "closure": "EDF"
+        },
+        {
+          "name": "coat_weight",
+          "type": "float",
+          "expression": "m.coat.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "coat_color",
+          "type": "color3",
+          "expression": "m.coatColor.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "coat_roughness",
+          "type": "float",
+          "expression": "max(m.coat.y, 0.02)",
+          "closure": "EDF"
+        },
+        {
+          "name": "coat_roughness_anisotropy",
+          "type": "float",
+          "expression": "m.coat.w",
+          "closure": "EDF"
+        },
+        {
+          "name": "coat_ior",
+          "type": "float",
+          "expression": "m.coat.z",
+          "closure": "EDF"
+        },
+        {
+          "name": "coat_darkening",
+          "type": "float",
+          "expression": "m.factors.w",
+          "closure": "EDF"
+        },
+        {
+          "name": "thin_film_weight",
+          "type": "float",
+          "expression": "m.thinFilm.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "thin_film_thickness",
+          "type": "float",
+          "expression": "m.thinFilm.y * 0.001",
+          "closure": "EDF"
+        },
+        {
+          "name": "thin_film_ior",
+          "type": "float",
+          "expression": "m.thinFilm.z",
+          "closure": "EDF"
+        },
+        {
+          "name": "emission_luminance",
+          "type": "float",
+          "expression": "1.0",
+          "closure": "EDF"
+        },
+        {
+          "name": "emission_color",
+          "type": "color3",
+          "expression": "m.emission.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "geometry_opacity",
+          "type": "float",
+          "expression": "m.factors.z",
+          "closure": "EDF"
+        },
+        {
+          "name": "geometry_thin_walled",
+          "type": "boolean",
+          "expression": "(m.subsurface.w > 0.5)",
+          "closure": "EDF"
+        },
+        {
+          "name": "geometry_normal",
+          "type": "vector3",
+          "expression": "normal",
+          "closure": "EDF"
+        },
+        {
+          "name": "geometry_coat_normal",
+          "type": "vector3",
+          "expression": "coatNormal",
+          "closure": "EDF"
+        },
+        {
+          "name": "geometry_tangent",
+          "type": "vector3",
+          "expression": "tangent",
+          "closure": "EDF"
+        },
+        {
+          "name": "geometry_coat_tangent",
+          "type": "vector3",
+          "expression": "coatTangent",
+          "closure": "EDF"
+        }
+      ],
+      "has_emission": true,
+      "emission_adapter": null
+    },
+    {
+      "id": 2,
+      "name": "disney_principled",
+      "nodedef": "ND_disney_principled",
+      "nodegraph": "NG_disney_principled",
+      "artifact": "materialx_disney_principled.slang",
+      "artifact_sha256": "ec121ac8fc460c4843621e951b60c185a2b63ea06c1a3a40e6f5c0b24606ba5e",
+      "inputs": [
+        {
+          "name": "baseColor",
+          "type": "color3",
+          "expression": "m.baseColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "metallic",
+          "type": "float",
+          "expression": "m.surface.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "roughness",
+          "type": "float",
+          "expression": "max(m.surface.y, 0.02)",
+          "closure": "BSDF"
+        },
+        {
+          "name": "anisotropic",
+          "type": "float",
+          "expression": "m.specular.z",
+          "closure": "BSDF"
+        },
+        {
+          "name": "specular",
+          "type": "float",
+          "expression": "m.specular.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "specularTint",
+          "type": "float",
+          "expression": "m.factors.w",
+          "closure": "BSDF"
+        },
+        {
+          "name": "sheen",
+          "type": "float",
+          "expression": "m.sheen.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "sheenTint",
+          "type": "float",
+          "expression": "m.fuzz.w",
+          "closure": "BSDF"
+        },
+        {
+          "name": "clearcoat",
+          "type": "float",
+          "expression": "m.coat.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "clearcoatGloss",
+          "type": "float",
+          "expression": "min(m.coat.y, 0.98)",
+          "closure": "BSDF"
+        },
+        {
+          "name": "specTrans",
+          "type": "float",
+          "expression": "m.transmission.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "ior",
+          "type": "float",
+          "expression": "m.specular.y",
+          "closure": "BSDF"
+        },
+        {
+          "name": "subsurface",
+          "type": "float",
+          "expression": "m.subsurface.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "subsurfaceDistance",
+          "type": "color3",
+          "expression": "m.subsurfaceRadius.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "caustra_normal",
+          "type": "vector3",
+          "expression": "normal",
+          "closure": "BSDF"
+        },
+        {
+          "name": "caustra_tangent",
+          "type": "vector3",
+          "expression": "tangent",
+          "closure": "BSDF"
+        },
+        {
+          "name": "caustra_emission",
+          "type": "color3",
+          "expression": "m.emission.xyz",
+          "closure": "EDF",
+          "adapter": "caustra_uniform_edf"
+        }
+      ],
+      "has_emission": false,
+      "emission_adapter": "caustra_uniform_edf"
+    },
+    {
+      "id": 3,
+      "name": "gltf_pbr",
+      "nodedef": "ND_gltf_pbr_surfaceshader",
+      "nodegraph": "IMPL_gltf_pbr_surfaceshader",
+      "artifact": "materialx_gltf_pbr.slang",
+      "artifact_sha256": "2b288efa14c0e1e41c0a34f386b386b293b2ec7c8ff3520f385172c188c8cb68",
+      "inputs": [
+        {
+          "name": "base_color",
+          "type": "color3",
+          "expression": "m.baseColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "metallic",
+          "type": "float",
+          "expression": "m.surface.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "roughness",
+          "type": "float",
+          "expression": "max(m.surface.y, 0.02)",
+          "closure": "BSDF"
+        },
+        {
+          "name": "normal",
+          "type": "vector3",
+          "expression": "normal",
+          "closure": "BSDF"
+        },
+        {
+          "name": "tangent",
+          "type": "vector3",
+          "expression": "tangent",
+          "closure": "BSDF"
+        },
+        {
+          "name": "occlusion",
+          "type": "float",
+          "expression": "m.factors.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "transmission",
+          "type": "float",
+          "expression": "m.transmission.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "specular",
+          "type": "float",
+          "expression": "m.specular.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "specular_color",
+          "type": "color3",
+          "expression": "m.specularColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "ior",
+          "type": "float",
+          "expression": "m.specular.y",
+          "closure": "BSDF"
+        },
+        {
+          "name": "alpha",
+          "type": "float",
+          "expression": "m.factors.z",
+          "closure": "BSDF"
+        },
+        {
+          "name": "alpha_mode",
+          "type": "integer",
+          "expression": "int(round(m.fuzz.z))",
+          "closure": "BSDF"
+        },
+        {
+          "name": "alpha_cutoff",
+          "type": "float",
+          "expression": "m.volume.w",
+          "closure": "BSDF"
+        },
+        {
+          "name": "iridescence",
+          "type": "float",
+          "expression": "m.thinFilm.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "iridescence_ior",
+          "type": "float",
+          "expression": "m.thinFilm.z",
+          "closure": "BSDF"
+        },
+        {
+          "name": "iridescence_thickness",
+          "type": "float",
+          "expression": "m.thinFilm.y",
+          "closure": "BSDF"
+        },
+        {
+          "name": "sheen_color",
+          "type": "color3",
+          "expression": "m.sheenColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "sheen_roughness",
+          "type": "float",
+          "expression": "m.sheen.y",
+          "closure": "BSDF"
+        },
+        {
+          "name": "clearcoat",
+          "type": "float",
+          "expression": "m.coat.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "clearcoat_roughness",
+          "type": "float",
+          "expression": "max(m.coat.y, 0.02)",
+          "closure": "BSDF"
+        },
+        {
+          "name": "clearcoat_normal",
+          "type": "vector3",
+          "expression": "coatNormal",
+          "closure": "BSDF"
+        },
+        {
+          "name": "emissive",
+          "type": "color3",
+          "expression": "m.emission.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "emissive_strength",
+          "type": "float",
+          "expression": "1.0",
+          "closure": "BSDF"
+        },
+        {
+          "name": "thickness",
+          "type": "float",
+          "expression": "m.subsurface.y",
+          "closure": "BSDF"
+        },
+        {
+          "name": "attenuation_distance",
+          "type": "float",
+          "expression": "m.transmission.y",
+          "closure": "BSDF"
+        },
+        {
+          "name": "attenuation_color",
+          "type": "color3",
+          "expression": "m.transmissionColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "anisotropy_strength",
+          "type": "float",
+          "expression": "m.specular.z",
+          "closure": "BSDF"
+        },
+        {
+          "name": "anisotropy_rotation",
+          "type": "float",
+          "expression": "m.specular.w",
+          "closure": "BSDF"
+        },
+        {
+          "name": "dispersion",
+          "type": "float",
+          "expression": "m.thinFilm.w",
+          "closure": "BSDF"
+        },
+        {
+          "name": "base_color",
+          "type": "color3",
+          "expression": "m.baseColor.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "metallic",
+          "type": "float",
+          "expression": "m.surface.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "roughness",
+          "type": "float",
+          "expression": "max(m.surface.y, 0.02)",
+          "closure": "EDF"
+        },
+        {
+          "name": "normal",
+          "type": "vector3",
+          "expression": "normal",
+          "closure": "EDF"
+        },
+        {
+          "name": "tangent",
+          "type": "vector3",
+          "expression": "tangent",
+          "closure": "EDF"
+        },
+        {
+          "name": "occlusion",
+          "type": "float",
+          "expression": "m.factors.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "transmission",
+          "type": "float",
+          "expression": "m.transmission.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "specular",
+          "type": "float",
+          "expression": "m.specular.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "specular_color",
+          "type": "color3",
+          "expression": "m.specularColor.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "ior",
+          "type": "float",
+          "expression": "m.specular.y",
+          "closure": "EDF"
+        },
+        {
+          "name": "alpha",
+          "type": "float",
+          "expression": "m.factors.z",
+          "closure": "EDF"
+        },
+        {
+          "name": "alpha_mode",
+          "type": "integer",
+          "expression": "int(round(m.fuzz.z))",
+          "closure": "EDF"
+        },
+        {
+          "name": "alpha_cutoff",
+          "type": "float",
+          "expression": "m.volume.w",
+          "closure": "EDF"
+        },
+        {
+          "name": "iridescence",
+          "type": "float",
+          "expression": "m.thinFilm.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "iridescence_ior",
+          "type": "float",
+          "expression": "m.thinFilm.z",
+          "closure": "EDF"
+        },
+        {
+          "name": "iridescence_thickness",
+          "type": "float",
+          "expression": "m.thinFilm.y",
+          "closure": "EDF"
+        },
+        {
+          "name": "sheen_color",
+          "type": "color3",
+          "expression": "m.sheenColor.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "sheen_roughness",
+          "type": "float",
+          "expression": "m.sheen.y",
+          "closure": "EDF"
+        },
+        {
+          "name": "clearcoat",
+          "type": "float",
+          "expression": "m.coat.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "clearcoat_roughness",
+          "type": "float",
+          "expression": "max(m.coat.y, 0.02)",
+          "closure": "EDF"
+        },
+        {
+          "name": "clearcoat_normal",
+          "type": "vector3",
+          "expression": "coatNormal",
+          "closure": "EDF"
+        },
+        {
+          "name": "emissive",
+          "type": "color3",
+          "expression": "m.emission.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "emissive_strength",
+          "type": "float",
+          "expression": "1.0",
+          "closure": "EDF"
+        },
+        {
+          "name": "thickness",
+          "type": "float",
+          "expression": "m.subsurface.y",
+          "closure": "EDF"
+        },
+        {
+          "name": "attenuation_distance",
+          "type": "float",
+          "expression": "m.transmission.y",
+          "closure": "EDF"
+        },
+        {
+          "name": "attenuation_color",
+          "type": "color3",
+          "expression": "m.transmissionColor.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "anisotropy_strength",
+          "type": "float",
+          "expression": "m.specular.z",
+          "closure": "EDF"
+        },
+        {
+          "name": "anisotropy_rotation",
+          "type": "float",
+          "expression": "m.specular.w",
+          "closure": "EDF"
+        },
+        {
+          "name": "dispersion",
+          "type": "float",
+          "expression": "m.thinFilm.w",
+          "closure": "EDF"
+        }
+      ],
+      "has_emission": true,
+      "emission_adapter": null
+    },
+    {
+      "id": 4,
+      "name": "usd_preview_surface",
+      "nodedef": "ND_UsdPreviewSurface_surfaceshader",
+      "nodegraph": "IMP_UsdPreviewSurface_surfaceshader",
+      "artifact": "materialx_usd_preview_surface.slang",
+      "artifact_sha256": "fac190033668ffedc5cafd06cce6ec635f51ba6f6f9e9a8b0f1c752fa1c1ba37",
+      "inputs": [
+        {
+          "name": "diffuseColor",
+          "type": "color3",
+          "expression": "m.baseColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "emissiveColor",
+          "type": "color3",
+          "expression": "m.emission.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "useSpecularWorkflow",
+          "type": "integer",
+          "expression": "int(round(m.factors.w))",
+          "closure": "BSDF"
+        },
+        {
+          "name": "specularColor",
+          "type": "color3",
+          "expression": "m.specularColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "metallic",
+          "type": "float",
+          "expression": "m.surface.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "roughness",
+          "type": "float",
+          "expression": "max(m.surface.y, 0.02)",
+          "closure": "BSDF"
+        },
+        {
+          "name": "clearcoat",
+          "type": "float",
+          "expression": "m.coat.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "clearcoatRoughness",
+          "type": "float",
+          "expression": "max(m.coat.y, 0.02)",
+          "closure": "BSDF"
+        },
+        {
+          "name": "opacity",
+          "type": "float",
+          "expression": "m.factors.z",
+          "closure": "BSDF"
+        },
+        {
+          "name": "opacityMode",
+          "type": "integer",
+          "expression": "int(round(m.fuzz.w))",
+          "closure": "BSDF"
+        },
+        {
+          "name": "opacityThreshold",
+          "type": "float",
+          "expression": "m.specular.w",
+          "closure": "BSDF"
+        },
+        {
+          "name": "ior",
+          "type": "float",
+          "expression": "m.specular.y",
+          "closure": "BSDF"
+        },
+        {
+          "name": "normal",
+          "type": "vector3",
+          "expression": "normal",
+          "closure": "BSDF"
+        },
+        {
+          "name": "displacement",
+          "type": "float",
+          "expression": "0.0",
+          "closure": "BSDF"
+        },
+        {
+          "name": "occlusion",
+          "type": "float",
+          "expression": "m.factors.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "caustra_tangent",
+          "type": "vector3",
+          "expression": "tangent",
+          "closure": "BSDF"
+        },
+        {
+          "name": "diffuseColor",
+          "type": "color3",
+          "expression": "m.baseColor.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "emissiveColor",
+          "type": "color3",
+          "expression": "m.emission.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "useSpecularWorkflow",
+          "type": "integer",
+          "expression": "int(round(m.factors.w))",
+          "closure": "EDF"
+        },
+        {
+          "name": "specularColor",
+          "type": "color3",
+          "expression": "m.specularColor.xyz",
+          "closure": "EDF"
+        },
+        {
+          "name": "metallic",
+          "type": "float",
+          "expression": "m.surface.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "roughness",
+          "type": "float",
+          "expression": "max(m.surface.y, 0.02)",
+          "closure": "EDF"
+        },
+        {
+          "name": "clearcoat",
+          "type": "float",
+          "expression": "m.coat.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "clearcoatRoughness",
+          "type": "float",
+          "expression": "max(m.coat.y, 0.02)",
+          "closure": "EDF"
+        },
+        {
+          "name": "opacity",
+          "type": "float",
+          "expression": "m.factors.z",
+          "closure": "EDF"
+        },
+        {
+          "name": "opacityMode",
+          "type": "integer",
+          "expression": "int(round(m.fuzz.w))",
+          "closure": "EDF"
+        },
+        {
+          "name": "opacityThreshold",
+          "type": "float",
+          "expression": "m.specular.w",
+          "closure": "EDF"
+        },
+        {
+          "name": "ior",
+          "type": "float",
+          "expression": "m.specular.y",
+          "closure": "EDF"
+        },
+        {
+          "name": "normal",
+          "type": "vector3",
+          "expression": "normal",
+          "closure": "EDF"
+        },
+        {
+          "name": "displacement",
+          "type": "float",
+          "expression": "0.0",
+          "closure": "EDF"
+        },
+        {
+          "name": "occlusion",
+          "type": "float",
+          "expression": "m.factors.x",
+          "closure": "EDF"
+        },
+        {
+          "name": "caustra_tangent",
+          "type": "vector3",
+          "expression": "tangent",
+          "closure": "EDF"
+        }
+      ],
+      "has_emission": true,
+      "emission_adapter": null
+    },
+    {
+      "id": 5,
+      "name": "simple_hair",
+      "nodedef": "ND_simple_hair_shader",
+      "nodegraph": "NG_simple_hair_shader",
+      "artifact": "materialx_simple_hair.slang",
+      "artifact_sha256": "5b2169847990306e98270b14f896dee549976ca9fb4bab7cb1c1ce5d01ddb0ee",
+      "inputs": [
+        {
+          "name": "melaninConcentration",
+          "type": "float",
+          "expression": "m.factors.x",
+          "closure": "BSDF"
+        },
+        {
+          "name": "melaninRedness",
+          "type": "float",
+          "expression": "m.factors.y",
+          "closure": "BSDF"
+        },
+        {
+          "name": "melaninMix",
+          "type": "float",
+          "expression": "m.factors.w",
+          "closure": "BSDF"
+        },
+        {
+          "name": "baseColor",
+          "type": "color3",
+          "expression": "m.baseColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "longitudinalRoughness",
+          "type": "float",
+          "expression": "m.surface.y",
+          "closure": "BSDF"
+        },
+        {
+          "name": "azimuthalRoughness",
+          "type": "float",
+          "expression": "m.specular.z",
+          "closure": "BSDF"
+        },
+        {
+          "name": "cuticleAngle",
+          "type": "float",
+          "expression": "m.coat.y",
+          "closure": "BSDF"
+        },
+        {
+          "name": "tint_R",
+          "type": "color3",
+          "expression": "m.specularColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "tint_TT",
+          "type": "color3",
+          "expression": "m.transmissionColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "tint_TRT",
+          "type": "color3",
+          "expression": "m.sheenColor.xyz",
+          "closure": "BSDF"
+        },
+        {
+          "name": "ior",
+          "type": "float",
+          "expression": "m.specular.y",
+          "closure": "BSDF"
+        },
+        {
+          "name": "caustra_normal",
+          "type": "vector3",
+          "expression": "normal",
+          "closure": "BSDF"
+        },
+        {
+          "name": "caustra_tangent",
+          "type": "vector3",
+          "expression": "tangent",
+          "closure": "BSDF"
+        },
+        {
+          "name": "caustra_emission",
+          "type": "color3",
+          "expression": "m.emission.xyz",
+          "closure": "EDF",
+          "adapter": "caustra_uniform_edf"
+        }
+      ],
+      "has_emission": false,
+      "emission_adapter": "caustra_uniform_edf"
+    }
+  ],
+  "source_files": [
+    {
+      "path": "libraries/bxdf/disney_principled.mtlx",
+      "sha256": "9cb0d581f4d5878604c645cd3ab13d15cc2937025727b8eeca1207007a2d4baa"
+    },
+    {
+      "path": "libraries/bxdf/gltf_pbr.mtlx",
+      "sha256": "916cfc62f4c5382dd1effd94f10e8772b31841783d284dcd8ea41fb697c7259d"
+    },
+    {
+      "path": "libraries/bxdf/lama/lama_add.mtlx",
+      "sha256": "426ac9880bc1ab4c2e03df7c4f8803b7069ce8009ecb5ac28801e36fb303f8cf"
+    },
+    {
+      "path": "libraries/bxdf/lama/lama_conductor.mtlx",
+      "sha256": "13308125fc69d46d71ddbce08172b5c154948d4e4446e7400b1028cf0526b13e"
+    },
+    {
+      "path": "libraries/bxdf/lama/lama_dielectric.mtlx",
+      "sha256": "3fa124ac3e73243608324192c3a81ed3f4e1f2990c2ca9630555a66cb8f992be"
+    },
+    {
+      "path": "libraries/bxdf/lama/lama_diffuse.mtlx",
+      "sha256": "c9a5a213dbfe4dbc3e8e2bdd8a0bbeb3fca4dc9db4e000a63cfb1b8483cf8217"
+    },
+    {
+      "path": "libraries/bxdf/lama/lama_emission.mtlx",
+      "sha256": "c235287ec55a76308bc26591a118c71f9266565db245a54817836442560632ea"
+    },
+    {
+      "path": "libraries/bxdf/lama/lama_generalized_schlick.mtlx",
+      "sha256": "2cfc2d339222c89bba3aa7db7a04486491c94a9528a77e06af6d18f4359c7de2"
+    },
+    {
+      "path": "libraries/bxdf/lama/lama_iridescence.mtlx",
+      "sha256": "2e4900417d47e72f47b95120c01addf101da129f15705f2f7c04f1f4d3958365"
+    },
+    {
+      "path": "libraries/bxdf/lama/lama_layer.mtlx",
+      "sha256": "7183f401d4330cca67884d0e7102e68bd7f708d7a94cc75151edce9b5a96e5ab"
+    },
+    {
+      "path": "libraries/bxdf/lama/lama_mix.mtlx",
+      "sha256": "087e6eb53b344ce94e23b684630c0a8b3be9fdcc98ec184a29c43e083590e556"
+    },
+    {
+      "path": "libraries/bxdf/lama/lama_sheen.mtlx",
+      "sha256": "c3d393831c3ca927bc3b6df611a9c4f41b7b21b02382b4a422b1b29f5e8983f6"
+    },
+    {
+      "path": "libraries/bxdf/lama/lama_sss.mtlx",
+      "sha256": "97fbf3988df5d14b1853e89bb3edd0b343069352f814e4ee45e2a5635cd73d98"
+    },
+    {
+      "path": "libraries/bxdf/lama/lama_surface.mtlx",
+      "sha256": "f388992a0e92e52c1d8d4813bc13a4682a2ee7c9e296ba7e9f1ba84c70dd8013"
+    },
+    {
+      "path": "libraries/bxdf/lama/lama_translucent.mtlx",
+      "sha256": "b9d1cdbe6392839f7bca0bd96d295c7bf0f805ea86972d9e6d52ad5e47316974"
+    },
+    {
+      "path": "libraries/bxdf/open_pbr_surface.mtlx",
+      "sha256": "2904f680a939215409fea90e3586db1e2087c5e29000611c1bf4be518fc65f83"
+    },
+    {
+      "path": "libraries/bxdf/standard_surface.mtlx",
+      "sha256": "2211a94bc37644cd420d0ee5de0359db2bc30f7823965676e511287a9fcd487d"
+    },
+    {
+      "path": "libraries/bxdf/translation/open_pbr_to_standard_surface.mtlx",
+      "sha256": "eea7d3eeedf147412a395c5e538faba4c0ca78194b097797e65adb4cd5423e44"
+    },
+    {
+      "path": "libraries/bxdf/translation/standard_surface_to_gltf_pbr.mtlx",
+      "sha256": "3e9794aebd4559fde8001bd796dc6be6c4134779da8ea2a81634ca21c6e10779"
+    },
+    {
+      "path": "libraries/bxdf/translation/standard_surface_to_open_pbr.mtlx",
+      "sha256": "14fc33b39b9a44ef157453c56ae62c1451530b535e92a53bfc201f6c15976857"
+    },
+    {
+      "path": "libraries/bxdf/translation/standard_surface_to_usd.mtlx",
+      "sha256": "711387398b56dd36d775f21451da656051a5b7b5ab7c3b68d51e343e0cb25c97"
+    },
+    {
+      "path": "libraries/bxdf/usd_preview_surface.mtlx",
+      "sha256": "66f6c5034beb9ea73637d8dee6d75a4cb9ab95508b71ab5afe181551a7ee28f3"
+    },
+    {
+      "path": "libraries/CMakeLists.txt",
+      "sha256": "a361bf6af32b2887367dcac64513b991f81acf89e7f3656b4e028a098c16352b"
+    },
+    {
+      "path": "libraries/cmlib/cmlib_defs.mtlx",
+      "sha256": "9ec656a0894beff086280f36704191eb56519fe025de88bad3f867fc2b54e170"
+    },
+    {
+      "path": "libraries/cmlib/cmlib_ng.mtlx",
+      "sha256": "37d9990c860af97034a294c3ef03bf46a35d0d06f724e1eaee1945a0c81e6da0"
+    },
+    {
+      "path": "libraries/lights/genglsl/lights_genglsl_impl.mtlx",
+      "sha256": "20d9de4c220b83b4708ad2b41c33c9ed541239ee94e466b5a06afeb9a1d8b035"
+    },
+    {
+      "path": "libraries/lights/genglsl/mx_directional_light.glsl",
+      "sha256": "7173423a256b038597e65880e470655412c21cdf51ae5523b387004eebc65b49"
+    },
+    {
+      "path": "libraries/lights/genglsl/mx_point_light.glsl",
+      "sha256": "9302fbac8bfa161ca1ecd08c6e8f65ea74fa5e8c0521828e89ea5ad40fc9b886"
+    },
+    {
+      "path": "libraries/lights/genglsl/mx_spot_light.glsl",
+      "sha256": "89dbfa651a42b50c29daa2bd4a6cac4ae77c6b6b365c1aee9a6c880988a58f89"
+    },
+    {
+      "path": "libraries/lights/genmsl/lights_genmsl_impl.mtlx",
+      "sha256": "a4d288c298b9a08dd5b45626f7e3da557ac115d281bcf8b125b32dc1f7aec235"
+    },
+    {
+      "path": "libraries/lights/genmsl/mx_directional_light.metal",
+      "sha256": "ec74d11b2658e51efd99f047ad2cb861cb1bff2419c01c50baccb59b898b1fe0"
+    },
+    {
+      "path": "libraries/lights/genmsl/mx_point_light.metal",
+      "sha256": "929aa1fc2ffea625a74b1d33d494fa77928d9b49e1e0d3476372b2b1be6bf10e"
+    },
+    {
+      "path": "libraries/lights/genmsl/mx_spot_light.metal",
+      "sha256": "e327efabcdb771beb5b60f9c51053bc5ef01a0d32c8f1b31fb969515b7eb6715"
+    },
+    {
+      "path": "libraries/lights/genslang/lights_genslang_impl.mtlx",
+      "sha256": "64e0b0d40f29ed52d2442a357e64816610182885befaa6ca4467006ee20d63fb"
+    },
+    {
+      "path": "libraries/lights/genslang/mx_directional_light.slang",
+      "sha256": "34bba2e32bf53faaf9c0568eb2c3b382b622349bea2a532caf25e871f4a41fe0"
+    },
+    {
+      "path": "libraries/lights/genslang/mx_point_light.slang",
+      "sha256": "cdd4bb245c44a13e280752d135ae729c1f1055871783353fef11889490362d33"
+    },
+    {
+      "path": "libraries/lights/genslang/mx_spot_light.slang",
+      "sha256": "04470be5f826f023494f7f13eaa50845b0710b2cd81bae92eae3cc9a02696b23"
+    },
+    {
+      "path": "libraries/lights/lights_defs.mtlx",
+      "sha256": "ce58e0de89b2f98bd915c434eeb790b9f76efaa9320cf36cc4168a0dd68db3cc"
+    },
+    {
+      "path": "libraries/nprlib/genglsl/nprlib_genglsl_impl.mtlx",
+      "sha256": "42a4680a3689e9f4b67e0fbf17e98293bbcbcd12d0e4d5e5ac3162b46a71ccfe"
+    },
+    {
+      "path": "libraries/nprlib/genmdl/nprlib_genmdl_impl.mtlx",
+      "sha256": "89eb5918f80665e40857864a8f55b84a86987fe97b49146e7cc9660f57242f63"
+    },
+    {
+      "path": "libraries/nprlib/genmsl/nprlib_genmsl_impl.mtlx",
+      "sha256": "587859c1ad5ff98fbb047e989eb00e4fb147320a9903381af2f406386bf355fa"
+    },
+    {
+      "path": "libraries/nprlib/genosl/nprlib_genosl_impl.mtlx",
+      "sha256": "48fdd4773e4b833cb39c9ce4830939d6ce8340f56e901f42aaf4b183b06d8090"
+    },
+    {
+      "path": "libraries/nprlib/genslang/nprlib_genslang_impl.mtlx",
+      "sha256": "b9722ea6784683af8ab2634355762eadba8546faab991e2e17e9ccc681d8827b"
+    },
+    {
+      "path": "libraries/nprlib/nprlib_defs.mtlx",
+      "sha256": "decda90e29a08c87b34a0d50181f9a656d196c7e636f2f9fb857972347b6fc33"
+    },
+    {
+      "path": "libraries/nprlib/nprlib_ng.mtlx",
+      "sha256": "3ba088765dcb40952b356de846c5f8d6ffae11902e3ed7528cde11c7d9d6a37f"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/lib/mx_closure_type.glsl",
+      "sha256": "f3c419225355dc81919dffbd8d0f659f7d0a3eb333e835e2b69cc1228d59548e"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/lib/mx_environment_fis.glsl",
+      "sha256": "9d80bc04c72be88ffd238004705edb648382d7e5b5e3f7b057cbafa46284d979"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/lib/mx_environment_none.glsl",
+      "sha256": "c4bb6aaf4d21dd5f1bcc39dc9a53ce7dad102089df20b9449612be32dafdccd8"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/lib/mx_environment_prefilter.glsl",
+      "sha256": "c9313a06fdcc46f867741c705eecfe38266c0f7cb6114090a2c2e6ad2378262f"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/lib/mx_generate_albedo_table.glsl",
+      "sha256": "c2f6a16040a4ac49b457ca64ee669a128b11126cf7468b2f2561f76d4bdfb8ea"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/lib/mx_generate_prefilter_env.glsl",
+      "sha256": "654cb2db6e6d99ec42947d0e1532fe842c13264b98eb6156d3c7986d6eaa8798"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/lib/mx_microfacet.glsl",
+      "sha256": "5cfa13b6ff645c3e9ee3ab8e6a56507129b29ae52ba084d05c2bc688ed8826bb"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/lib/mx_microfacet_diffuse.glsl",
+      "sha256": "b6105919ee8ee8b61d00cafa78447d3d5cfed4ce8001e6e0d08cb1570d46a684"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/lib/mx_microfacet_sheen.glsl",
+      "sha256": "c105ca7788faad788b605945830d6fa998a41ac085bd920db246c69d80c3a54c"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/lib/mx_microfacet_specular.glsl",
+      "sha256": "ee390c557e1a0028169664adb0a73bf7f33c4f599dde0eb47a36b1fe3487240c"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/lib/mx_shadow.glsl",
+      "sha256": "08dec3017552f7e53feefa098b3e914fad588fe8d1d4d3ab2186e5ea30244093"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/lib/mx_shadow_platform.glsl",
+      "sha256": "530b037e1208a93ae8502c75c7a396513e6c147c8df9bddd2d12d106c58acd94"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/lib/mx_transmission_opacity.glsl",
+      "sha256": "935a278e25a3984e28125672ce94898673f58ded43c440ffe07b43a4cffaf201"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/lib/mx_transmission_refract.glsl",
+      "sha256": "e2eb1a74289854f79aef3dd9a97353493190d3916f267a33080c344b082b1d0a"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_add_bsdf.glsl",
+      "sha256": "96b83909e7bb358fd3cc415371f3eb3e5cfd673067a3c1359f8c881cd3e1a3e1"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_add_edf.glsl",
+      "sha256": "123ee1d663eea2b2bd89f0a55d5e79a6164aeef86f7c74e135ddbdd1eb31b722"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_anisotropic_vdf.glsl",
+      "sha256": "39821dd68bb182ba1bf195db95f5c2a63e4d5ce45e01eed493bca5f8b0abb4b1"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_artistic_ior.glsl",
+      "sha256": "02d412d88c80b47af3a23b793303e94a0cefec2149ca79f25f87d1433ccdebf3"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_blackbody.glsl",
+      "sha256": "5b496519c53b046360407265ac61cd8120355da070c4b4475c878720086eead2"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_burley_diffuse_bsdf.glsl",
+      "sha256": "56bcb3a148da042f81346a2fe6a100d15375fc21e208b28470996ede334eb284"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_chiang_hair_bsdf.glsl",
+      "sha256": "1c496b58863d724528b6fdc4227d48651af1cea64807463bd8eb3e03d5d3f35d"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_conductor_bsdf.glsl",
+      "sha256": "37ab238d472aa9b87f3346dfab6d106993705519a122dcecd5551ebc50b894a7"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_dielectric_bsdf.glsl",
+      "sha256": "07902964eedea700adee2691d6dc5f52a6114b9aa0ea5b8cbb27b9eb2dbd9786"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_displacement_float.glsl",
+      "sha256": "b3def716823a93f5d6c36b92ae0ea2737a2729c7777daefe0f7577e65ff61938"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_displacement_vector3.glsl",
+      "sha256": "3ce9389e63acbdc483de3f3107c683ba5dc5c6a4a97d6d27cdf4d40026482ac0"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_generalized_schlick_bsdf.glsl",
+      "sha256": "c8240b0d2646591302d0c9270afc897a9bbc49f078e4bf241b5b741564ed38b5"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_generalized_schlick_edf.glsl",
+      "sha256": "9853cc7e95680137a700a1a033578f6d16194bc71bef86e54c39c092013c9d4b"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_layer_bsdf.glsl",
+      "sha256": "7ff46ed4c4e3dec426a2fc22b7ed0fd4ac08f9e86d79d56de656f2d75b9de66b"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_layer_vdf.glsl",
+      "sha256": "964f249e686a1f0e7cafa8128b926db8ebe4f93d4a5c2278f4f8149e92dcb852"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_mix_bsdf.glsl",
+      "sha256": "cab979a0dad2214f2896bbfe5351a8dcdc2533ed3e8d7301253105b01759299f"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_mix_edf.glsl",
+      "sha256": "681ed60b943d6ba663eb75ab1fead42dec98dc81ec86090f95b4fadf250fd35f"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_multiply_bsdf_color3.glsl",
+      "sha256": "559cd70d0b37564586ff72233b21000a2c88ced121dfe51814b0d62cd4a46536"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_multiply_bsdf_float.glsl",
+      "sha256": "8892c573c1b1f28cefc4492083e2f7bcff55d44b25f3de7ce13074f1f49d22f8"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_multiply_edf_color3.glsl",
+      "sha256": "5857be891cde85a3fe9d2d316eb3dbd62b82732b189a5844728fc8642ee5fabb"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_multiply_edf_float.glsl",
+      "sha256": "eb56f2439c48f1419a46b2907f6dfd0ec9de14d51a450f71e1d2825a73150071"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_oren_nayar_diffuse_bsdf.glsl",
+      "sha256": "b5ae808384c00b0576de96a1c67746630bbc483d000154662f95035dcb284960"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_roughness_anisotropy.glsl",
+      "sha256": "3f0044ed81ef9e29e678c736600536c55a49d8b8b8ba38947c17eb2c9af54a89"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_roughness_dual.glsl",
+      "sha256": "47bc7d99c69efcbb6aafb5bb238510935848278025c73c2d89454a7f4c35664f"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_sheen_bsdf.glsl",
+      "sha256": "b20c4951eafc79f42ae26b70037c188a0e7f848a247853fed76c648d2427cdf6"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_subsurface_bsdf.glsl",
+      "sha256": "4017bdc059cc84e79beb1d3a071ba0c5757b60b3144c9a8a6a3579ccad2594e6"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_translucent_bsdf.glsl",
+      "sha256": "d17fe8a3b5ab92b1d584c260d7e69079f0e75256aa4fd39ae59bcf676ad5317e"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/mx_uniform_edf.glsl",
+      "sha256": "cd2b6eddb1d031b72940580923c26e520b1ce931cb3a76e3c53d9c8331fad9f0"
+    },
+    {
+      "path": "libraries/pbrlib/genglsl/pbrlib_genglsl_impl.mtlx",
+      "sha256": "faf25f169590176bb1d433a4815b0298cf2227166c23f97bef0fe734aaa2e039"
+    },
+    {
+      "path": "libraries/pbrlib/genmdl/pbrlib_genmdl_impl.mtlx",
+      "sha256": "7e58bd2aed4fec9281d18e30c154d54bae558961e1b8902ff5da709832175edf"
+    },
+    {
+      "path": "libraries/pbrlib/genmsl/lib/mx_shadow_platform.metal",
+      "sha256": "98c1ba136bc628a4ec1d3313c275ad4542454f89cb009d3d60bd59227822057a"
+    },
+    {
+      "path": "libraries/pbrlib/genmsl/pbrlib_genmsl_impl.mtlx",
+      "sha256": "bce8aa898cdc95c9771f77ee9bc7dd5763572495e7c4a5421cda540839c57e80"
+    },
+    {
+      "path": "libraries/pbrlib/genosl/lib/mx_microfacet.osl",
+      "sha256": "4c25d5c1daa06e963f2fc175da9fe3c30b0e3c50c4dc1e4393d4df01d676e31f"
+    },
+    {
+      "path": "libraries/pbrlib/genosl/mx_anisotropic_vdf.osl",
+      "sha256": "d8a2ff4b5afd73fa643d7d6655fc7df1acb8ce153e32bbd66cf08f4ed12defab"
+    },
+    {
+      "path": "libraries/pbrlib/genosl/mx_artistic_ior.osl",
+      "sha256": "f8c4c5383ba912e1dfc890b2a2eba44b7dcfd01acbc349631aea223e698d7731"
+    },
+    {
+      "path": "libraries/pbrlib/genosl/mx_blackbody.osl",
+      "sha256": "14379d7ba2c03fd91657b7a931262ee84183078f90a07407b6b65bfa271d4c21"
+    },
+    {
+      "path": "libraries/pbrlib/genosl/mx_chiang_hair_bsdf.osl",
+      "sha256": "471f3fe982fbb0aafd654d845641921cf9ba971aba7d23d75b8411f26941b373"
+    },
+    {
+      "path": "libraries/pbrlib/genosl/mx_chiang_hair_roughness.osl",
+      "sha256": "8bae38c65918ba3965d08cfbbc524c641b64967daa20c3939cf4ba9cdbb404aa"
+    },
+    {
+      "path": "libraries/pbrlib/genosl/mx_dielectric_bsdf.osl",
+      "sha256": "6145aefed2a7f80ecdccd7372adfc9456e45bf281d3a214582c51e16ff6ad301"
+    },
+    {
+      "path": "libraries/pbrlib/genosl/mx_generalized_schlick_bsdf.osl",
+      "sha256": "69f0475acb5c2e7e3ea68c142ec07c6dad5fb9c010f22ba0e7a591f8f5ae26ce"
+    },
+    {
+      "path": "libraries/pbrlib/genosl/mx_generalized_schlick_edf.osl",
+      "sha256": "4789d99958cde3576174ff868334b5b47601ce4d6c0a0eb476252b19f48431d5"
+    },
+    {
+      "path": "libraries/pbrlib/genosl/mx_roughness_anisotropy.osl",
+      "sha256": "9145fb7ede2fc50900b67deb5b0a5a896d77fa04e0c6fe945c73b3a7b793896e"
+    },
+    {
+      "path": "libraries/pbrlib/genosl/mx_roughness_dual.osl",
+      "sha256": "83071a647a3650240cf7d5a0f5e6adca44bb965cd7f078cd6e05703054b2e0ce"
+    },
+    {
+      "path": "libraries/pbrlib/genosl/mx_subsurface_bsdf.osl",
+      "sha256": "7f3bd535624df76e5aae79ddb4add75563427d1394feeed93227001f3afb2627"
+    },
+    {
+      "path": "libraries/pbrlib/genosl/mx_surface.osl",
+      "sha256": "719c901935dc8402882f0a78abe1bdf85e7a503f0bf1082c51c812fbca74ceb3"
+    },
+    {
+      "path": "libraries/pbrlib/genosl/pbrlib_genosl_impl.mtlx",
+      "sha256": "09ab5740289b4ce421e04cca293fd42ac4cff959d0278bf47b12b397c823f41a"
+    },
+    {
+      "path": "libraries/pbrlib/genslang/pbrlib_genslang_impl.mtlx",
+      "sha256": "5fbde2202d06c51906dd2df3fe52d1c686a33dbda13eaa5888332bb070b3c075"
+    },
+    {
+      "path": "libraries/pbrlib/pbrlib_defs.mtlx",
+      "sha256": "cba74f62b3620f114b3a6e0316b7bd5708a37d447dd64ad3ae288d570a89ba8e"
+    },
+    {
+      "path": "libraries/pbrlib/pbrlib_ng.mtlx",
+      "sha256": "d36bcf88691844c0b1b27147a4cc8cf4c7bf32f808e1532e69a41c3cbf677d3b"
+    },
+    {
+      "path": "libraries/README.md",
+      "sha256": "fb4263443447d6824573628f9084e47f0cf8f273c4cb38ca5dc7a8bb4f02105e"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/lib/mx_flake.glsl",
+      "sha256": "bf0572af73b10045e7b3f8b5ced89ba118b357509dffadf754108ccb9c0c0c55"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/lib/mx_geometry.glsl",
+      "sha256": "3ea35cea75d3681e9618a323e160a2db163e5cd7a773962d29e52592c54832d1"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/lib/mx_hextile.glsl",
+      "sha256": "1a65d93d12fc3a4412ee8006eec5d9da15972a2c9007babf7027400ddef1c729"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/lib/mx_hsv.glsl",
+      "sha256": "9aaed1957666318f8676ccc680b81260744e0c7489daa736ac0b391d1e1d54b2"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/lib/mx_math.glsl",
+      "sha256": "c3a4a544388ceea3367f7a235925567321e5380a543be40fee84dadb4178d0cc"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/lib/mx_noise.glsl",
+      "sha256": "5dfc4ec072be4a43c54e96bffa6f0b6aa8f347b81f20cd4126aead98af43fb92"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/lib/mx_transform_uv.glsl",
+      "sha256": "024ce28b275063f93703c1ec8d094875d06b8d02f61fa71cb41a9ebc0af50602"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/lib/mx_transform_uv_vflip.glsl",
+      "sha256": "c82fbc94f12d2f6b672490cc4577dd91007ac1ef4beeb4e145624b20911ed630"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_aastep.glsl",
+      "sha256": "0e5437b9f71c4343f8727c3defe37427ab234ff86af94ae7fd837656d60d30b9"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_burn_color3.glsl",
+      "sha256": "f976cb7eee5ab4c48b191138f421ed4eb78c29bc997af8cea1c3d2decf52546d"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_burn_color4.glsl",
+      "sha256": "266853e0d7b95d4d500538e7d090938e677244da16ccfc2320c8be4fb47721b6"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_burn_float.glsl",
+      "sha256": "44cb7459146ad415835ac8052963a4020507ba99489479672025bbc905983f4b"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_cellnoise2d_float.glsl",
+      "sha256": "246bebbe09ab72eaaaa4b51bef245cb2c957f498546b70f43d3feb7852525b8a"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_cellnoise3d_float.glsl",
+      "sha256": "4bcba7ae89bb524e774a1a5ce346334fb8ea7a23ea69f957736d33546916da11"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_creatematrix_vector3_matrix33.glsl",
+      "sha256": "ceb6e983e3e620b2b35a9fb8bc4916b2398d18b0a95a8fa2b662934ab16ad945"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_creatematrix_vector3_matrix44.glsl",
+      "sha256": "ced213913f87931285515d297d280a5994ac66473ceb3030c339ea476b99559c"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_creatematrix_vector4_matrix44.glsl",
+      "sha256": "f395b072c9f8563b4a3d14b529dca2f86112adc2436fa7c4629414977060758a"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_disjointover_color4.glsl",
+      "sha256": "c6625ef34dd2c4ea343f74d244866db4a700047559dfb138cac32b6bead20a99"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_dodge_color3.glsl",
+      "sha256": "6aad6f1eed85ab48e15d73e0a0ca0c15bc56352152c73939d168da2657c44b0d"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_dodge_color4.glsl",
+      "sha256": "9b30975de19d66828b149fed1b6cdf9701182145e59939384aef29c80f7cae71"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_dodge_float.glsl",
+      "sha256": "00fb547d81c55eb0710fea5d803fb3806133e326cca5331a0fb57f07bdcf0449"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_flake2d.glsl",
+      "sha256": "d1cf6fd2e40f93b880c4e5d7785560d007a43f0eec95dc6632bb9746ca37f6b2"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_flake3d.glsl",
+      "sha256": "cae0033457649fcf4492ebc94ecc478e8413e1b9b0b2a0a47cd79a413e323745"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_fractal2d_float.glsl",
+      "sha256": "189fea8196620385cf28d7e8f1268ab7d4d2b5f2be7d5eab398f5fe60fd492ab"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_fractal2d_vector2.glsl",
+      "sha256": "5a98f95165f7cb24b8a39fab26167bb474f0559f867055b24b3f98cb558270e1"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_fractal2d_vector3.glsl",
+      "sha256": "640f320f2dc3e9fa0f36ae2f98180a9e32adb2f1254a85423246cceb140b2977"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_fractal2d_vector4.glsl",
+      "sha256": "8569f8967df8b5bfa2f8d29da20e9a24aaf9121f51da73f174cb40ab81b2259e"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_fractal3d_float.glsl",
+      "sha256": "851cdfcda7a2ef63b97fa15aac0d00934d6021e8cc3d348a566c9b7239ddab38"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_fractal3d_vector2.glsl",
+      "sha256": "2e953b18014f05ebfb78e63a4cbaeff2fb9be7204ee65726ac15e2475bd20594"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_fractal3d_vector3.glsl",
+      "sha256": "a07c1f29ef1698e5ccc5d534f9afce315a616b63ccd1e4011402b906638b7791"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_fractal3d_vector4.glsl",
+      "sha256": "d88c08c8e9151c012b9e6d967ad10dba3076b3afdb271e600e8ed3410c4ce487"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_heighttonormal_vector3.glsl",
+      "sha256": "22c3dea0ba6640445a54a4c6eb3783785d86af42ad3f93b2ea66ec1de98de4cf"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_hextiledimage.glsl",
+      "sha256": "e9fd5803cae0c2147b5fba0722746bc3368e35361beae59b788e9a00dc4da0e0"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_hextilednormalmap.glsl",
+      "sha256": "a23c3ed152ce5514456e5e602a654f4baa30009da5ca98881408e499dc4a0dd3"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_hsvtorgb_color3.glsl",
+      "sha256": "86ab0afc3ae68a012a21293c7dc5a4649563bae59b140043923d267eb669a10f"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_hsvtorgb_color4.glsl",
+      "sha256": "cada3c7914cb9c650d962a028a676ef7709a73c62d762a8ac71c5cb64023c7c8"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_image_color3.glsl",
+      "sha256": "b84c48dfb64c043c449dc06077627a9abc99a2b87bf7ddc236e4e7f6df7f0103"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_image_color4.glsl",
+      "sha256": "926010dc43735504d6b3009faaac9f90f641bf3bae9e2d9c0da8d07dae94f34d"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_image_float.glsl",
+      "sha256": "cc4cd3a4d2c2b92fdd6dd3d7ee097116113f91c111a15617bf60b9cf7ebe5fde"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_image_vector2.glsl",
+      "sha256": "1017572654f022e48ded07537bb4e793ebf132273e1d74c520dce9144964441d"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_image_vector3.glsl",
+      "sha256": "13263b8e7f6da31dfecf3fa5ed13864db5cd0f0547cbc35356efc0cee697e5b5"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_image_vector4.glsl",
+      "sha256": "74f531f614cff689b35b2cddd6b77c826039cfd9b2d7758a7f045358bff7d6c7"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_luminance_color3.glsl",
+      "sha256": "0e24c185b8f687b97039f0e81a0ec27423f5f83b61d66b3c9d05e57ff5ace26e"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_luminance_color4.glsl",
+      "sha256": "8a99bddb5043e10820bf85b95b4c983af26e719f75cb9bcb74d600f9c77fa7c0"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_mix_surfaceshader.glsl",
+      "sha256": "1ad85762192ee845f908d53765f4ca2034109343d8a9e1e53e4f81ff2e120432"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_noise2d_float.glsl",
+      "sha256": "75b1a2f7a35415bef79e2fe72bd34dfbf4eaa91c019a08cfbf294d8dd2821c12"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_noise2d_vector2.glsl",
+      "sha256": "4d5bd9b563d7a95a2e951b75b4abf35158f5eb41e4026c198fbc29a44db6f01e"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_noise2d_vector3.glsl",
+      "sha256": "cca817bef416dee3465d79a36710729ddcc25cc9b7122aef61d2f2d5e2e0f3e2"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_noise2d_vector4.glsl",
+      "sha256": "7d058aa564f7af0969b56dd5e0fb1681d4e6bffd40d54df4173736efc3650e03"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_noise3d_float.glsl",
+      "sha256": "4f612d94ddce4c52c0cd1a2ee12ecfbb729a2c368fdff5d1d2e8d3ac12b27437"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_noise3d_vector2.glsl",
+      "sha256": "5529c90e0161fae68e0e05b5f58793ca02d02159f8425492acf3c09b50014aeb"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_noise3d_vector3.glsl",
+      "sha256": "80cab8ac5e17e57881e3dac3b30f67d58d65318c716d7d4d382b0e4351a1b301"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_noise3d_vector4.glsl",
+      "sha256": "2efbe800b4ff85d28844b6f0c9e2cb2c8bc76a8e7783e8947593e9cb66d326a6"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_normalmap.glsl",
+      "sha256": "2b5c27a69129d9024fa47ddfa0cf27c304768f29558a44f3d0bc9d8a41f0140d"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_premult_color4.glsl",
+      "sha256": "ade834666f6925bc99945af4bb2582157ff9bd323b2776f7a0185be19509e9c3"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_ramplr_float.glsl",
+      "sha256": "caa4812548c76869dfa761ff3511406ccf824a2cf4b5ca026f65204f1190b4cd"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_ramplr_vector2.glsl",
+      "sha256": "a2c5a772817b51aab2fa85561b2a313cace9bf85fc2b4766a8962e1af54fb832"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_ramplr_vector3.glsl",
+      "sha256": "8dcc3e6bc4e602bbcf8944da92f6f24caf356b36ff6f9a5fa88a0cbbae0c8cae"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_ramplr_vector4.glsl",
+      "sha256": "264115563e80c39d77e7c75a2221b15b07b88987c0c5b1f65809cbb854bf8bbe"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_ramptb_float.glsl",
+      "sha256": "b11631156c747aafeb777e7482eb5595ffa5534620411a8be79cf95ac34cff77"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_ramptb_vector2.glsl",
+      "sha256": "d94c5008b943b58c5d99c6e797a125f624c1abee5a8206ee166b7df1cd904143"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_ramptb_vector3.glsl",
+      "sha256": "a7abf2c5250f5eb432a176bcc63b4d28463dabf589b538b930d46a280ea8bd0d"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_ramptb_vector4.glsl",
+      "sha256": "e069c1cd9bc521d71a168c4a8737d71488dbf2a2dfe3a1f4784029c2e86effe3"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_rgbtohsv_color3.glsl",
+      "sha256": "7d8a2422f18a14cb4520c24a1e42d996c52c0f2e2aa5a032ffd13ee94fbc07f9"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_rgbtohsv_color4.glsl",
+      "sha256": "96b4d546c5a0237748d5c3ace074d587a74313902dc449c0c42122365ed61639"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_rotate_vector2.glsl",
+      "sha256": "d019a2735a6eab67cb64e0f0dc105dc02de7d0ddfff43b62aa97e9acf6d17ef9"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_rotate_vector3.glsl",
+      "sha256": "fcc1eef60e63dde44521afc28827c88d1cc867a2ed4138556257a82952f6c5bf"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_smoothstep_float.glsl",
+      "sha256": "3de496092f5424ab8824e1287d9763f4a3533686462e7cfe65f97021dfed622b"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_splitlr_float.glsl",
+      "sha256": "00e2bffaf7acc990293503451b5120d32d2c801e43b74b9eb3c1a8e265dd0468"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_splitlr_vector2.glsl",
+      "sha256": "0d7f724c82e198dd0bfe522a4a4fde3491da5aeee541739eff95fb2f7d52abe6"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_splitlr_vector3.glsl",
+      "sha256": "a888f1df5342993a216581b64f86663af77f0c5ccaf0975fb4cd0b7295bf29ca"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_splitlr_vector4.glsl",
+      "sha256": "48cd4bc0f51b6d606b33396bc19f1fdded68afdfbfa4a8094635be1880b88a16"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_splittb_float.glsl",
+      "sha256": "90612426035307a1a5776d664ad7aacff97862d4b127f2be82c02755607051f9"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_splittb_vector2.glsl",
+      "sha256": "ccd9dda28530b2446e605a58b94c9494f0fb97b43e1aa00ce9eb9c3b6a486c2b"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_splittb_vector3.glsl",
+      "sha256": "ef3b1a060f6403177aa49fd72e2f3ccc543b207e78b6217523d6f4c754b74127"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_splittb_vector4.glsl",
+      "sha256": "02ff4014503232ad8096c843f2b39e5b74503bf0da61707b7206588538b06054"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_surface_unlit.glsl",
+      "sha256": "f5bfb754ab3d9539e31cea13e723af370cea5a7df4521466887b6c6ff0ab4d87"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_transformmatrix_vector2M3.glsl",
+      "sha256": "1532e5a1c2e7de14686fefef876d67d2f8191426e80f268895b34daf8e4f5366"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_transformmatrix_vector3M4.glsl",
+      "sha256": "76e65fd3cd8fce0e0911aa16a27ca6027dd08c96efb27ac06949f1a53a31fca5"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_unpremult_color4.glsl",
+      "sha256": "14c9f8f42a326b79cd557d694b77b8486f16cf7fd5214d1c0d9c80775a33e688"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_worleynoise2d_float.glsl",
+      "sha256": "03df053005aac6da337e4a283fcdd1db2575769651eb467a55bcd9a1e498a769"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_worleynoise2d_vector2.glsl",
+      "sha256": "3f02631950ebb94e18a672a3025033aae69493ffc2a50d368d9135ee8ed9df4d"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_worleynoise2d_vector3.glsl",
+      "sha256": "dec3f1685251487f0febb83a3ec842340857f338758fb87c9f111584ae7399d8"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_worleynoise3d_float.glsl",
+      "sha256": "09aa8409791ffa52fd81b618443d47c216ecf2785e657df47305c7d2975f886b"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_worleynoise3d_vector2.glsl",
+      "sha256": "969d5d2ccd87483572bb5c3c1751ddbd895b977a6b3cd32c4b7d3e60c3a0d2ab"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/mx_worleynoise3d_vector3.glsl",
+      "sha256": "504f7315323a900ea1ea6a517dede9e4d6a150a6739e3840cb5ec88666b16c6d"
+    },
+    {
+      "path": "libraries/stdlib/genglsl/stdlib_genglsl_impl.mtlx",
+      "sha256": "caa2fd299f7c403bf2233f79b44b0174f6afb01a8fa0df3591fed70ae8ba1c33"
+    },
+    {
+      "path": "libraries/stdlib/genmdl/stdlib_genmdl_impl.mtlx",
+      "sha256": "48cc5f395746fb570f17de5f0928faf6eb9f87d06eb7e20fa5a461d494c2e9b6"
+    },
+    {
+      "path": "libraries/stdlib/genmsl/lib/mx_math.metal",
+      "sha256": "99745206d12fad4bd83c11278271340fa507faaea0757fad051747210bdce2b5"
+    },
+    {
+      "path": "libraries/stdlib/genmsl/lib/mx_matscalaroperators.metal",
+      "sha256": "77db69358cba187899570becf8c6a60e2d0240da8c9962271780d5da5dee9107"
+    },
+    {
+      "path": "libraries/stdlib/genmsl/lib/mx_texture.metal",
+      "sha256": "41dd518b5bce124cec2e3b88b39ebdcf021a757583919bcd7672fd1ee98a46a4"
+    },
+    {
+      "path": "libraries/stdlib/genmsl/stdlib_genmsl_impl.mtlx",
+      "sha256": "0f06f659229583605d6da04924bf36df893dda0c3a0be5fd1cb26b00b6751bbc"
+    },
+    {
+      "path": "libraries/stdlib/genosl/include/color4.h",
+      "sha256": "050a849aec9566a491511de1e1206e00120b860f38d2a460ad459e0bd596b39b"
+    },
+    {
+      "path": "libraries/stdlib/genosl/include/matrix33.h",
+      "sha256": "fa46bd9d1a3f68d3c7bf769e7b76e91d96915d3adf1017c938bb22e76096e862"
+    },
+    {
+      "path": "libraries/stdlib/genosl/include/mx_funcs.h",
+      "sha256": "2ee44f8e467b670a319c34180bfa93b6dcca32cdfa84427d29d01f599de1eb22"
+    },
+    {
+      "path": "libraries/stdlib/genosl/include/vector2.h",
+      "sha256": "0ab314a6c946fcd0cebe9643cc49d5b1a3409f7404dc79bbe84799f9a652eb3e"
+    },
+    {
+      "path": "libraries/stdlib/genosl/include/vector4.h",
+      "sha256": "9dcf5bb6a8689edd86583954e4a5b2c58f8e4ae9dc00b84734f94e2c9c558161"
+    },
+    {
+      "path": "libraries/stdlib/genosl/lib/mx_flake.osl",
+      "sha256": "cfe065deef5ebcb3d7aa348adc1aeb5f383f76d8218f739cba2936673e76cbf9"
+    },
+    {
+      "path": "libraries/stdlib/genosl/lib/mx_hextile.osl",
+      "sha256": "ba568c114c9a6731d165a19c0ecd2f7be8da5892a8c1996b4ceb4e48020e6f3c"
+    },
+    {
+      "path": "libraries/stdlib/genosl/lib/mx_transform_uv.osl",
+      "sha256": "a4a3ceda91064a33180d5c5a975e70088381f214da9525dd7e8e8df92435c7b1"
+    },
+    {
+      "path": "libraries/stdlib/genosl/lib/mx_transform_uv_vflip.osl",
+      "sha256": "d7ab0c5d07f441bfe2ddbf43b665516a889310939249ca078e293850252ff23d"
+    },
+    {
+      "path": "libraries/stdlib/genosl/lib/vector4_extra_ops.osl",
+      "sha256": "67568c4a030fa675d875cb98c358f3bc7f54b6956133a3cf25875ae0de8c16a0"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_burn_color3.osl",
+      "sha256": "0b26fbd1ea54074230559b4014eb50e048149fc8c82a372b051662b824e39846"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_burn_color4.osl",
+      "sha256": "3e9381afd422d594f98a7b894d8ea17b3e39a0e6d600f7175676b20a440fbf2b"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_burn_float.osl",
+      "sha256": "ff803888640e74af80a2abc2bb773e21486ea21d4af070ff0f2d0c83fcd6410a"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_cellnoise2d_float.osl",
+      "sha256": "f322dbb344910b6ec336442f65e47e7c16f4e8f28af6722ee6dd504fafda2569"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_cellnoise3d_float.osl",
+      "sha256": "80249dcb9a325805a845b9ace54a9dab8ec8c0180fe556e026c7bd3e143fb094"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_creatematrix.osl",
+      "sha256": "d2828385c02fa3fcca89c181201537ee5ceae621e6247acec295b5099dde96f6"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_disjointover_color4.osl",
+      "sha256": "e0f8ef57d489aa7717110cff7668f61497ddf33ab482de7754d9036bb40fe667"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_dodge_color3.osl",
+      "sha256": "68ce31db494796c56d7847ce119faa9238fadf867c3746de2fd88b173c7fcab4"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_dodge_color4.osl",
+      "sha256": "876c792e2e9565e66ae737e273c1807d5563d9dbfd835ffaa2b022621d5bba08"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_dodge_float.osl",
+      "sha256": "b7ac6be489f3f84ef6e12e2a46a1c08bd6c00b47c4d3b3778f437b13e1082ef2"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_flake2d.osl",
+      "sha256": "340ef9917c341fab99cd1e030d36c2768e98dc2badd4a5be8b0e8be349d06d4f"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_flake3d.osl",
+      "sha256": "3579f048e3566aceb9f72cb9571e003cf44010c5d718e84bdfa40a24d583e0e7"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_fractal2d_float.osl",
+      "sha256": "63e1787b1a11f0083c0c486ad02e84ec13009aa53ca8b1b915031420f01d69d0"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_fractal2d_vector2.osl",
+      "sha256": "acd45ac515521c1ead8523f2d0609ba33aa66d17a3c10a04ad30c27e038418fa"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_fractal2d_vector3.osl",
+      "sha256": "4884d0f8a614837f83f6a312782ee6a8fe4cd5de1051424c12f74d3a74517753"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_fractal2d_vector4.osl",
+      "sha256": "3f262fc42a92e45bf7db2de24f5c2d14ca4de2b13948d736ebe12b96ed0b82da"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_fractal3d_float.osl",
+      "sha256": "f7cdf88b7a7195ef89ae429322c284811c51df687d2a1a6268e9bc1126f3752d"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_fractal3d_vector2.osl",
+      "sha256": "cb284ad76ed75ea32aa98de9718ca2fedf7cb57a6f94aa3aff98c2a0d615835e"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_fractal3d_vector3.osl",
+      "sha256": "4bd974ce6aed1a46b01acd218dc41b50870732237bc14e31f2ebec538f4cad58"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_fractal3d_vector4.osl",
+      "sha256": "8292fcb66b0f68afd01b103b47e588a4584a1ad8552c353001f18e4f341decab"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_frame_float.osl",
+      "sha256": "c36d8d54766e248cffe7f810e8f8419f81d0e5d75edef0c2824d9ca4ad463557"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_geomcolor_color3.osl",
+      "sha256": "d1467562686110db0535c4024e48a293e811b4bf8a2c8ae3764d55330ea20596"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_geomcolor_color4.osl",
+      "sha256": "4afb884f0957c07fe30003bbc9aee34b313dca14f260e49ab165e06c40d73c1f"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_geomcolor_float.osl",
+      "sha256": "b0994709aa57288c8c4beec1d5b48b248561c062aa9eea07300eb6581d29a956"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_geompropvalue_boolean.osl",
+      "sha256": "679358acc4edf57442461ed4bee31dc42434ea1e0518a83ea08f13133930a9ce"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_geompropvalue_color3.osl",
+      "sha256": "7fbe6aed5dc0ba9484fdc954c3c28899f6651dffea18b078118a2652cbc15eea"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_geompropvalue_color4.osl",
+      "sha256": "f373875d041fb00e4900c8659169705c3b30ebec30807107176610bf0fd70f65"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_geompropvalue_filename.osl",
+      "sha256": "68e1fc5882cc3c4c16cc71b67071df4ef69796abfbf2a5ce63ee5e147c208bcd"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_geompropvalue_float.osl",
+      "sha256": "64c6ace6ee5448cc257f14f78ded4f9b1a8e06be81a940b21979c2e528ba60c3"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_geompropvalue_integer.osl",
+      "sha256": "aaed8cb47ae7ccc8f66b311b9678f5b2644bc70b7085371ae341499ff7f50d47"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_geompropvalue_string.osl",
+      "sha256": "b18ac68311a387b4b5c37466fe4120aada7017e41f59744545981c3aaeed116f"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_geompropvalue_vector2.osl",
+      "sha256": "17afcbc5ae917a5e20cfa0f794205262401eac01e5c4742b6ce5e3f2f989a607"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_geompropvalue_vector3.osl",
+      "sha256": "55d710ad15449a22c10ee0efce022dcec78c81b66c88e247e375bd68ce9f985f"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_geompropvalue_vector4.osl",
+      "sha256": "bba71844af943223bfa7c80a0de54ca9b1d41628100b45624c730b5c5564a96b"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_heighttonormal_vector3.osl",
+      "sha256": "cd4964dfcf394eabb1dcce4bca6d0a232a30c2059922beb0aeb505c31bd0d35c"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_hextiledimage_color3.osl",
+      "sha256": "00e828daa0b3311b3874fc35c753591d09f95656b16c500460781c6be02f350e"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_hextiledimage_color4.osl",
+      "sha256": "91e348f98608b96402107544e060156876e2869560d795a1c0702028b63d372b"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_hextilednormalmap_vector3.osl",
+      "sha256": "78ea575fec7fe2cd9d1fab4719c3f83deac1d588ef26485d44e2d29f7e5f00fb"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_hsvtorgb_color3.osl",
+      "sha256": "dbb17635459e2908abfa0d9b130b6fc658de25a653bfe37266954bb6aba9a13d"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_hsvtorgb_color4.osl",
+      "sha256": "201352d21e22a06557478a7d4dae5a52f86af43d08ac7a20c98ae2f25e99bb11"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_image_color3.osl",
+      "sha256": "489ef40f2479f7dda488606d135a4dc0d3c818e230facd5849fb602def609fa5"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_image_color4.osl",
+      "sha256": "bddcce3539c2a9f1a905019259fb9263d6b3f8fc2a76d3baee2be5db06861fdf"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_image_float.osl",
+      "sha256": "cccc821b63ef63668b917c3be7ca3be0e78ea3c4079f4f7b4bf7c453cc3571be"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_image_vector2.osl",
+      "sha256": "09cd54393eb2fadcb1b9ecc86144dc36b3bdf560571c112ba0f2e04bd187b868"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_image_vector3.osl",
+      "sha256": "c21f52cd345769dd2928c197f7eebe3cbbf4f1562e13df0dc848eac7c49fafb7"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_image_vector4.osl",
+      "sha256": "108f9d3544ef5ac02e510c28ea5c44cc6d3e006159c575016335ce862e5350c8"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_luminance_color3.osl",
+      "sha256": "9e576841c8a8d3665ade3115638046d698a94069068f0b8e3e0dbbb76ac3bd5f"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_luminance_color4.osl",
+      "sha256": "ae296677ea994e95ac97289c80f190dc5f06eec1086d7db32d1ab794d6afa892"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_mix_surfaceshader.osl",
+      "sha256": "9a8c5126898e9a5dfd36a40354caaa567eeec30809601bfdc2cdd953aefa9bf8"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_noise2d_float.osl",
+      "sha256": "8796294171f500b6b0460c985d4b135e1f684cc58e2737f8f59adce29bde5954"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_noise2d_vector2.osl",
+      "sha256": "3e72cd1b3b807094f8b3b2fd60aa525842a3f9f2be3103ad691c38ed5796a436"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_noise2d_vector3.osl",
+      "sha256": "ee081bbf0506a8a06e493eeb9f29476b0c73861cf55961549db97fff289633a7"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_noise2d_vector4.osl",
+      "sha256": "50c228727147da034786e93998a5528a00d2d8e516cf91fe011648546eaa2d53"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_noise3d_float.osl",
+      "sha256": "3dc48e89bc0434b0283401309e8276664c76f32fab161fde8b8bfabf6bfca891"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_noise3d_vector2.osl",
+      "sha256": "61b6960b4914c3dd9a9cf5aeb27d5bc4d8b833c0272ef1faca8661ece57c68e9"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_noise3d_vector3.osl",
+      "sha256": "24e21bb78f6ba7da44cac577e668afd669581b53e4b5de45c6c07498f86329b9"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_noise3d_vector4.osl",
+      "sha256": "009c68aed94bec82a1144e678ccac90fc2c9560ab85f8a002bc64e86d5d75007"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_normalmap.osl",
+      "sha256": "332ccf63130bc14db6b28278d596d2367a9dda00c32226aa42824d9ddcc19c25"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_premult_color4.osl",
+      "sha256": "4637167f949b8298ddc26296e3857f6207d788bf52d3d11f8a74a4dace447916"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_rgbtohsv_color3.osl",
+      "sha256": "b8125272ddc449acfc71eafee498607e059d4c921d9bf6c9e38a337493b92052"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_rgbtohsv_color4.osl",
+      "sha256": "96482dca2f293411db1248ba019e0eff7e85a1c58c49298bdbded692bdf8f515"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_rotate_vector2.osl",
+      "sha256": "04be60ca5172c1a08b31ed7a1a38d2fdc8c479c22698ed7f68a12f99cbe99542"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_rotate_vector3.osl",
+      "sha256": "63e65d8b64a6373e647fd4d33f07544d9cf724a2d0d04f353109bf91a3aeec60"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_set_ci.osl",
+      "sha256": "da2918e5ef052b41972321dbc33860f3e10ff30b20635187c4879d3d2f5b96bc"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_surface_unlit.osl",
+      "sha256": "9d74d218c2196a4098e933c54efc743a4266b4b204286a8f84f58ff105dabcbf"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_surfacematerial.osl",
+      "sha256": "37effdd0605d4db69fd796e86940a6f4a3f81f9e5ef1c0b621ce2a8ef916ee2d"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_time_float.osl",
+      "sha256": "feb748bfc3c8efdca3f622360a05cafee347866c0b6550b53c234cacf6bf2c01"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_transformmatrix_vector2M3.osl",
+      "sha256": "d973bf23a5093883f5407c4015d68a9443088e342f1e2e69a1c3f5d52e94d078"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_unpremult_color4.osl",
+      "sha256": "3f0e36ccdd742fa2a442762861f689386dcde463f3ff69a76ab73e31b9f8decc"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_worleynoise2d_float.osl",
+      "sha256": "669362c92efcd3d04bc08ee01e262f186cea0707f01f27f7f2212d4d29a03db1"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_worleynoise2d_vector2.osl",
+      "sha256": "19e9fb4b466bf172705f7dfa03a2a96e3b51010563ee2ef638c8a1644421c225"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_worleynoise2d_vector3.osl",
+      "sha256": "a964666123419a1793b0550f9f6a33629418ebf0df71e555732db4958cf9bed8"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_worleynoise3d_float.osl",
+      "sha256": "df2b5d9a45c47c402d2e1027c59476786a999dad881aa3d24e1524585298b51e"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_worleynoise3d_vector2.osl",
+      "sha256": "2feb4bd22cb8117cccd7a48d37736b9e082bc3f5c713793cf471fdc7043b1a74"
+    },
+    {
+      "path": "libraries/stdlib/genosl/mx_worleynoise3d_vector3.osl",
+      "sha256": "160a290f820de7b277ef4616e03d37f7d94ae3e21f4cf6e4d47c1d1752609d75"
+    },
+    {
+      "path": "libraries/stdlib/genosl/stdlib_genosl_impl.mtlx",
+      "sha256": "388248c076333ed9246a21379ec05928a1b2dac0d6bb142cee4d0998bd4127d9"
+    },
+    {
+      "path": "libraries/stdlib/genslang/lib/mx_math.slang",
+      "sha256": "947a46b1c37ce7e786594e486eb40a0166b8a080fb06b82c688486037d526ec6"
+    },
+    {
+      "path": "libraries/stdlib/genslang/lib/mx_texture.slang",
+      "sha256": "e5e1e0e509936b4d11d8d0b2b74e81a3cb56462888d7d1f205d1423d8ae2affd"
+    },
+    {
+      "path": "libraries/stdlib/genslang/stdlib_genslang_impl.mtlx",
+      "sha256": "2ac248fe0c083a769298d8ace12bb661891dd8f75a20cadffb25fe775b73d6c4"
+    },
+    {
+      "path": "libraries/stdlib/stdlib_defs.mtlx",
+      "sha256": "47c6c0e7f4a3c140925f29d4bc5fc977950e1be95e1a2c3f62b40f412b234678"
+    },
+    {
+      "path": "libraries/stdlib/stdlib_ng.mtlx",
+      "sha256": "ac426ee8ef0e2044866eff8fbd726e85cc59b89c5e3696c198fae3195b007738"
+    },
+    {
+      "path": "libraries/targets/essl.mtlx",
+      "sha256": "c8c793369cc65149ed7856420e30698b93a06a267559b02428968823de3b61e0"
+    },
+    {
+      "path": "libraries/targets/genglsl.mtlx",
+      "sha256": "fa38f96732c051336c6baa578cf1156258da4b5d22209b8a037000a8c74fcd9d"
+    },
+    {
+      "path": "libraries/targets/genmdl.mtlx",
+      "sha256": "2f66ec52c2972ce7b4ff27f264396e06b6fc0d6125f175b7d96b613aa86e16de"
+    },
+    {
+      "path": "libraries/targets/genmsl.mtlx",
+      "sha256": "8cce75a7e78aba0d11a8ed7a8ba13a328e4e92a5e71012b7f89237e053962709"
+    },
+    {
+      "path": "libraries/targets/genosl.mtlx",
+      "sha256": "20d689854bf85974a81be49c863150b4ae2cded93802e8d9d9760e2e740791b0"
+    },
+    {
+      "path": "libraries/targets/genoslnetwork.mtlx",
+      "sha256": "a16c83f9f3219d162aa44543e3ecd5a4611bd21d92e86a7d193a802bcbeaac57"
+    },
+    {
+      "path": "libraries/targets/genslangl.mtlx",
+      "sha256": "9c547defdb73f0dcedbf524dec9aae79cb23b89865814ccccf8a08717bfe846b"
+    },
+    {
+      "path": "resources/Materials/Examples/SimpleHair/simple_hair_default.mtlx",
+      "sha256": "f1df06b3160076d9e94e5dd23ef0f1c0f8f5267c61dc6e49a3c2409796a5454d"
+    }
+  ],
+  "adaptations": [
+    "Clone official surface node graph with BSDF and EDF terminals; all NodeDef inputs retained.",
+    "Remove raster ABI, texture environment helpers and fragment entry; use analytic directional albedo and no environment shader.",
+    "Prefix macros and namespace each model; supply per-hit normal/tangent parameters.",
+    "Standard Surface coat tangent source is promoted to the existing Caustra independent CoatTangent API; official rotation and normalization remain intact.",
+    "UsdPreviewSurface normalmap is already evaluated by the asset IR; connect its resolved world normal directly.",
+    "Finite GGX proposal adapter floors specular and coat roughness to 0.02; Disney inverse clearcoatGloss is capped at 0.98.",
+    "Remove screen-space SSS curvature helper (zero local response); bulk subsurface is integrated by the core random walk.",
+    "Existing asset IR supplies parameters and linear textures; folded emission uses unit strength and stored RGB.",
+    "Disney and Hair have no source EDF; Caustra general emission API uses the official uniform_edf primitive.",
+    "Core owns sampling/PDF, geometric transmission and random-walk subsurface/volume integration."
+  ]
+}

@@ -1,0 +1,3 @@
+# Additional offline conversion dependency; not used by the renderer.
+-r requirements-assets.txt
+OpenEXR==3.4.3

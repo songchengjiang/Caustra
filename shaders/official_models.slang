@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-// Native implementations of MaterialX v1.39.5 disney_principled, gltf_pbr,
-// UsdPreviewSurface and the official SimpleHair example nodegraph. These follow
-// their own nodegraph order and primitives; they are not Standard Surface
-// parameter translations. Reference paths and changes: third_party/materialx/ORIGIN.md.
+// Sampling proposals and physical transmission adapters for native model tags.
+// Ordinary surface values and EDFs use official ShaderGen code in generated/.
+// The transport adapters retain native model semantics; they do not translate
+// the models to Standard Surface. Provenance: third_party/materialx/ORIGIN.md.
 #ifndef CAUSTRA_OFFICIAL_MODELS
 #define CAUSTRA_OFFICIAL_MODELS
 #include "../third_party/materialx/mx_hair_math.slang"
@@ -237,30 +237,6 @@ void officialHairAngles(SurfaceClosure c,float3 view,out float so,out float co,o
   float etaP=sqrt(max(eta*eta-so*so,0.0f))/max(co,.000001f);
   gammaT=asin(clamp(sg/etaP,-1.0f,1.0f));
 }
-float3 officialHairValue(SurfaceClosure c,float3 view,float3 light)
-{
-  float so,co,go,gt;officialHairAngles(c,view,so,co,go,gt);
-  float si=clamp(dot(light,c.tangent),-1.0f,1.0f),ci=sqrt(max(0.0f,1.0f-si*si));
-  float y1=dot(light,c.normal),x1=dot(light,c.bitangent),y2=dot(view,c.normal),x2=dot(view,c.bitangent);
-  float phi=atan2(y1*x2-y2*x1,x1*x2+y1*y2);
-  float eta=max(c.material.specular.y,1.00001f),ct=sqrt(max(.000001f,1.0f-(so/eta)*(so/eta)));
-  float f=openPbrFresnelDielectric(co*cos(go),eta);
-  float3 transmittance=exp(-officialHairAbsorption(c.material)*(2.0f*cos(gt)/ct));
-  float3 attenuation[4];official_hair_attenuation(f,transmittance,attenuation);
-  float2 angles[4];official_hair_alpha_angles(c.material.coat.y*SURFACE_PI-SURFACE_PI*.5f,si,ci,angles);
-  float3 value=float3(0);
-  for(uint p=0;p<4;++p)
-  {
-    float2 rough=officialHairRoughness(c.material,p);
-    float mp=official_hair_longitudinal_scattering(angles[p].x,angles[p].y,so,co,rough.x);
-    float np=official_hair_azimuthal_scattering(phi,int(p),rough.y,go,gt);
-    float3 tint=p==0?c.material.specularColor.xyz:(p==1?c.material.transmissionColor.xyz:c.material.sheenColor.xyz);
-    value+=mp*np*max(tint,float3(0))*attenuation[p];
-  }
-  // MaterialX's direct hair response includes 1/pi and already incorporates the
-  // fiber's projected measure. Do not multiply it by a surface-normal cosine.
-  return max(value,float3(0))*SURFACE_INV_PI;
-}
 float officialLogisticCdf(float x,float s) { return 1.0f/(1.0f+exp(clamp(-x/s,-80.0f,80.0f))); }
 float officialLogisticDensity(float x,float s,float a,float b)
 {
@@ -299,7 +275,7 @@ float officialHairPdf(SurfaceClosure c,float3 view,float3 light)
 
 SurfaceClosure makeOfficialClosure(MaterialEvaluation evaluation,MaterialContext context,float3 view)
 {
-  SurfaceClosure c=(SurfaceClosure)0;c.material=evaluation.material;
+  SurfaceClosure c=(SurfaceClosure)0;c.source=evaluation;c.material=evaluation.material;
   c.material.baseColor.xyz=max(c.material.baseColor.xyz,float3(0));
   c.geometricNormal=surfaceNormalize(context.geometricNormal,float3(0,0,1));
   if(dot(c.geometricNormal,view)<0.0f)c.geometricNormal=-c.geometricNormal;
@@ -361,14 +337,14 @@ SurfaceEval evaluateOfficialSurface(SurfaceClosure c,float3 view,float3 light)
   SurfaceEval r=(SurfaceEval)0;
   if(c.material.program.z==5)
   {
-    r.fCos=officialHairValue(c,view,light);r.pdf=officialHairPdf(c,view,light);return r;
+    r.fCos=surfaceGeneratedReflection(c,view,light);r.pdf=officialHairPdf(c,view,light);return r;
   }
   if(dot(view,c.geometricNormal)<=0.0f)return r;
   if(dot(light,c.geometricNormal)<0.0f)
   {
     r.pdf=c.transmissionProbability*officialTransmissionPdf(c,view,light,r.fCos);return r;
   }
-  r.fCos=officialReflection(c,view,light);
+  r.fCos=surfaceUsesGeneratedReflection(c)?surfaceGeneratedReflection(c,view,light):officialReflection(c,view,light);
   float diffuse=max(0.0f,dot(c.normal,light))*SURFACE_INV_PI;
   float main=surfaceGgxPdf(surfaceToLocal(view,c.tangent,c.bitangent,c.normal),surfaceToLocal(light,c.tangent,c.bitangent,c.normal),c.alpha);
   float coat=surfaceGgxPdf(surfaceToLocal(view,c.coatTangent,c.coatBitangent,c.coatNormal),surfaceToLocal(light,c.coatTangent,c.coatBitangent,c.coatNormal),c.coatAlpha);
@@ -420,7 +396,7 @@ SurfaceSample sampleOfficialSurface(SurfaceClosure c,float3 view,float3 xi)
   }
   r.direction=surfaceNormalize(r.direction,c.normal);
   if(c.material.program.z!=5 && ((r.event==3 || r.event==4)!=(dot(r.direction,c.geometricNormal)<0.0f)))return (SurfaceSample)0;
-  SurfaceEval e=evaluateOfficialSurface(c,view,r.direction);
+  SurfaceEval e=evaluateSurface(c,view,r.direction);
   if(e.pdf<=0.0f || isnan(e.pdf) || isinf(e.pdf))return (SurfaceSample)0;
   r.pdf=e.pdf;r.weight=e.fCos/e.pdf;
   if(!surfaceFinite(r.weight) || !any(r.weight>0.0f))return (SurfaceSample)0;

@@ -117,8 +117,10 @@ int main(int argc,char**) {
     // Opposing 82-degree normals expose reflected GGX proposals below their
     // own shading hemisphere but above Ng. Such proposals must be absorption:
     // their density is zero in surfaceGgxPdf, even if another lobe has a value.
-    // Reference is an independent uniform-sphere integral of evaluateSurface
-    // (2M directions), not the sampler under test: RGB .519899/.406406/.236167.
+    // Reference directly integrates the official ShaderGen provider over the
+    // geometric hemisphere, bypassing closure construction and the sampler.
+    // Reproduce with generated_material_tests --integrate-tilted:
+    // 65536 / 262144 directions agree within 5e-6 in each channel.
     auto tiltedMaterial=caustra::Material{};tiltedMaterial.baseColor={.8f,.6f,.3f,1};tiltedMaterial.surface.y=.8f;
     tiltedMaterial.specular.x=0;tiltedMaterial.coat={1,.8f,2.5f,0};
     auto tiltedScene=planeScene(tiltedMaterial);
@@ -131,7 +133,7 @@ int main(int argc,char**) {
     camera.verticalFov=1;renderer.setCamera(camera);
     auto tilted=mean(render(renderer,tiltedScene,1024));
     std::cout<<"Tilted base/coat furnace RGB: "<<tilted[0]<<','<<tilted[1]<<','<<tilted[2]<<'\n';
-    require(std::abs(tilted[0]-.519899)<.0035&&std::abs(tilted[1]-.406406)<.0035&&std::abs(tilted[2]-.236167)<.0035,
+    require(std::abs(tilted[0]-.435242762593)<.0035&&std::abs(tilted[1]-.342283699616)<.0035&&std::abs(tilted[2]-.202845129575)<.0035,
       "Tilted base/coat GGX sampler disagrees with the independently integrated complete BSDF");
     camera.verticalFov=20;renderer.setCamera(camera);
 

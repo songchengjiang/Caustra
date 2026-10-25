@@ -384,7 +384,7 @@ void DlssBackend::configure(VkCommandBuffer cmd, VkExtent2D input, VkExtent2D ou
 }
 
 void DlssBackend::evaluate(VkCommandBuffer cmd, VkBuffer guides, VkBuffer output, bool reset, float jitterX, float jitterY,
-                           const std::array<float,16>& view, const std::array<float,16>& projection) {
+                           const std::array<float,16>& view, const std::array<float,16>& projection, float frameTimeMs) {
   auto& state = *impl_;
   if(!state.feature) throw std::logic_error("DLSS backend is not configured.");
   VkBufferMemoryBarrier ready{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
@@ -433,7 +433,7 @@ void DlssBackend::evaluate(VkCommandBuffer cmd, VkBuffer guides, VkBuffer output
   evaluate.InReset = reset ? 1 : 0;
   evaluate.InPreExposure = 1;
   evaluate.InExposureScale = 1;
-  evaluate.InFrameTimeDeltaInMsec = 1000.f / 60.f;
+  evaluate.InFrameTimeDeltaInMsec = frameTimeMs;
   // Caustra supplies conventional column-vector transforms in row-major memory.
   // NGX expects row-major matrices with the vector on the LEFT, so transpose the
   // mathematical transforms (translation lands in the final row).
@@ -450,18 +450,27 @@ void DlssBackend::evaluate(VkCommandBuffer cmd, VkBuffer guides, VkBuffer output
   VkBufferImageCopy readback{};
   readback.imageSubresource = colorLayers;
   readback.imageExtent = {state.output.width, state.output.height, 1};
+  VkBufferMemoryBarrier writable{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
+  writable.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+  writable.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  writable.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  writable.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  writable.buffer = output;
+  writable.size = VK_WHOLE_SIZE;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &writable, 0, nullptr);
   vkCmdCopyImageToBuffer(cmd, result.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, output, 1, &readback);
   result.barrier(cmd, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT);
 
   VkBufferMemoryBarrier visible{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
   visible.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-  visible.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+  visible.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
   visible.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
   visible.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
   visible.buffer = output;
   visible.offset = 0;
   visible.size = VK_WHOLE_SIZE;
-  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1, &visible, 0, nullptr);
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &visible, 0, nullptr);
 }
 
 } // namespace caustra

@@ -1,10 +1,9 @@
 """USD scene adapter kept outside the rendering core."""
-from collections import defaultdict
 from pathlib import Path
 import math
 import MaterialX as mx
 from pxr import Ar, Gf, Sdf, Usd, UsdGeom, UsdLux, UsdShade
-from .model import Asset, AssetError, Material, Mesh
+from .model import Asset, AssetError, Material, Mesh, Op
 from .materialx_compiler import MaterialCompiler, load_materialx, read_resource
 
 
@@ -14,6 +13,11 @@ def _value_string(value):
     if isinstance(value,(float,int,str)): return str(value)
     try: return ", ".join(str(v) for v in value)
     except TypeError as error: raise AssetError("Unsupported USD material value: "+str(type(value))) from error
+
+
+def _prim_identity(prim):
+    """Native instance proxies share authored geometry, but not root opinions."""
+    return str((prim.GetPrimInPrototype() if prim.IsInstanceProxy() else prim).GetPath())
 
 
 def materialx_from_usd(material,libraries,time=Usd.TimeCode.Default()):
@@ -73,7 +77,7 @@ def materialx_from_usd(material,libraries,time=Usd.TimeCode.Default()):
                 definition=libraries.getNodeDef(identifier)
         if definition is None: raise AssetError("Unknown MaterialX NodeDef %s on %s" % (identifier,path))
         visiting.add(path)
-        name=mx.createValidName(path.strip("/").replace("/","_"))
+        name=mx.createValidName(_prim_identity(shader.GetPrim()).strip("/").replace("/","_"))
         # Preserve distinct USD names even after MaterialX identifier sanitization.
         name=doc.createValidChildName(name)
         node=doc.addNodeInstance(definition,name);translated[path]=node
@@ -151,12 +155,16 @@ def triangulate(points):
     return triangles
 
 
-def import_usd(path,material_override=None,time=None,displacement_subdivisions=3):
+def import_usd(path,material_override=None,time=None,displacement_subdivisions=3,texture_max_size=0):
     path=Path(path).resolve()
     try: stage=Usd.Stage.Open(str(path))
     except Exception as error: raise AssetError("Cannot open USD scene: "+str(error)) from error
     if not stage: raise AssetError("Cannot open USD scene: "+str(path))
     asset=Asset();compiler=MaterialCompiler(asset)
+    if not isinstance(texture_max_size,int) or texture_max_size<0 or texture_max_size>16384:
+        raise AssetError("Texture maximum size must be 0 (original) or 1..16384")
+    compiler.textures.max_size=texture_max_size
+    bounds_exclusions=set()
     snapshot=Usd.TimeCode(time) if time is not None else Usd.TimeCode.Default()
     cache=UsdGeom.XformCache(snapshot)
     meters=float(UsdGeom.GetStageMetersPerUnit(stage));up=str(UsdGeom.GetStageUpAxis(stage))
@@ -186,14 +194,23 @@ def import_usd(path,material_override=None,time=None,displacement_subdivisions=3
         binding=UsdShade.MaterialBindingAPI(prim)
         material=binding.ComputeBoundMaterial()[0]
         key=str(material.GetPath()) if material else "<default>"
+        document=surface=None
+        if material and material.GetPrim().IsInstanceProxy():
+            # Canonical node names make equivalent prototype graphs identical.
+            # Retain the resolved graph content in the key: a connection to an
+            # instance-root input can have a different value in each instance.
+            document,surface=materialx_from_usd(material,compiler.libraries,snapshot)
+            key=(_prim_identity(material.GetPrim()),mx.writeToXmlString(document))
         if key not in materials:
-            if material: document,surface=materialx_from_usd(material,compiler.libraries,snapshot)
+            if material:
+                if document is None: document,surface=materialx_from_usd(material,compiler.libraries,snapshot)
             else:
                 document=mx.createDocument();document.setDataLibrary(compiler.libraries)
                 surface=document.addNodeInstance(compiler.libraries.getNodeDef("ND_standard_surface_surfaceshader"),"default_surface")
             materials[key]=compiler.compile(document,surface,path.parent)
         return materials[key]
-    bounds=[];camera_has_focus=False
+    geometry_cache={};binding_cache={};uv_cache={};mesh_cache={}
+    camera_has_focus=False
     def area_light(prim):
         if prim.IsA(UsdLux.RectLight):
             light=UsdLux.RectLight(prim)
@@ -238,7 +255,6 @@ def import_usd(path,material_override=None,time=None,displacement_subdivisions=3
         if any(not math.isfinite(v) for v in material.values[1]): raise AssetError("USD light radiance is not finite")
         mesh=Mesh(len(asset.materials),[list(p)+[0]+[0,0,-1,0]+[0,0,0,0]+[0,0,0,0] for p in points],indices)
         asset.materials.append(material);asset.instances.append((len(asset.meshes),transform(matrix)));asset.meshes.append(mesh)
-        bounds.extend(world)
     with Ar.ResolverContextBinder(stage.GetPathResolverContext()):
         for prim in Usd.PrimRange(stage.GetPseudoRoot(),Usd.TraverseInstanceProxies()):
             if not prim.IsActive() or not prim.IsDefined(): continue
@@ -261,75 +277,115 @@ def import_usd(path,material_override=None,time=None,displacement_subdivisions=3
             mesh=UsdGeom.Mesh(prim)
             if mesh.GetSubdivisionSchemeAttr().Get(snapshot)!=UsdGeom.Tokens.none:
                 raise AssetError("Subdivision USD meshes require tessellation before export: "+str(prim.GetPath()))
-            points=mesh.GetPointsAttr().Get(snapshot)
-            counts=mesh.GetFaceVertexCountsAttr().Get(snapshot);indices=mesh.GetFaceVertexIndicesAttr().Get(snapshot)
-            if not points or not counts: continue
-            if not indices or sum(counts)!=len(indices) or any(i<0 or i>=len(points) for i in indices): raise AssetError("Invalid USD mesh topology")
-            normals=mesh.GetNormalsAttr().Get(snapshot);normal_interpolation=str(mesh.GetNormalsInterpolation())
+            geometry_key=_prim_identity(prim)
+            if geometry_key not in geometry_cache:
+                points=mesh.GetPointsAttr().Get(snapshot)
+                counts=mesh.GetFaceVertexCountsAttr().Get(snapshot);indices=mesh.GetFaceVertexIndicesAttr().Get(snapshot)
+                if not points or not counts: continue
+                if not indices or sum(counts)!=len(indices) or any(i<0 or i>=len(points) for i in indices): raise AssetError("Invalid USD mesh topology")
+                geometry_cache[geometry_key]=(points,counts,indices,mesh.GetNormalsAttr().Get(snapshot),str(mesh.GetNormalsInterpolation()),
+                                              set(mesh.GetHoleIndicesAttr().Get(snapshot) or []),
+                                              mesh.GetOrientationAttr().Get(snapshot)==UsdGeom.Tokens.leftHanded)
+            points,counts,indices,normals,normal_interpolation,holes,left_handed=geometry_cache[geometry_key]
             default_material=material_index(prim)
-            face_material=[default_material]*len(counts);assigned=set()
-            for subset in UsdShade.MaterialBindingAPI(prim).GetMaterialBindSubsets():
-                index=material_index(subset.GetPrim())
-                for face in subset.GetIndicesAttr().Get(snapshot) or []:
-                    if face<0 or face>=len(counts) or face in assigned: raise AssetError("Overlapping or invalid USD material subsets")
-                    assigned.add(face);face_material[face]=index
+            subsets=[(subset,material_index(subset.GetPrim())) for subset in UsdShade.MaterialBindingAPI(prim).GetMaterialBindSubsets()]
+            binding_key=(geometry_key,default_material,tuple((_prim_identity(subset.GetPrim()),index) for subset,index in subsets))
+            if binding_key not in binding_cache:
+                face_material=[default_material]*len(counts);assigned=set()
+                for subset,index in subsets:
+                    for face in subset.GetIndicesAttr().Get(snapshot) or []:
+                        if face<0 or face>=len(counts) or face in assigned: raise AssetError("Overlapping or invalid USD material subsets")
+                        assigned.add(face);face_material[face]=index
+                binding_cache[binding_key]=(face_material,set(face_material))
+            face_material,used_materials=binding_cache[binding_key]
             spherical_metadata=prim.GetCustomDataByKey("caustra:sphericalInteriorUV")
             if spherical_metadata is not None and not isinstance(spherical_metadata,bool):
                 raise AssetError("caustra:sphericalInteriorUV must be a boolean")
             spherical_interior=bool(spherical_metadata)
-            for index in set(face_material):
+            for index in used_materials:
                 if not asset.materials[index].program[3]&1: continue
                 previous=interior_uv_mappings.setdefault(index,spherical_interior)
                 if previous!=spherical_interior:
                     raise AssetError("A heterogeneous material cannot mix spherical and ordinary interior UV mappings; use distinct material bindings")
                 if spherical_interior: asset.materials[index].program[3]|=2
             primvars=UsdGeom.PrimvarsAPI(prim)
-            uv_data={}
-            for index in set(face_material):
+            uv_data={};uv_keys=[]
+            for index in sorted(used_materials):
                 names=compiler.material_uv_names.get(index,set())
                 if len(names)>1: raise AssetError("A material uses more than one UV primvar; only one set is supported")
                 name=next(iter(names),"st")
                 uv=primvars.FindPrimvarWithInheritance(name)
                 if names and not uv: raise AssetError("Material UV primvar is missing: "+name)
-                uv_data[index]=(uv.ComputeFlattened(snapshot),str(uv.GetInterpolation())) if uv else (None,"constant")
-            holes=set(mesh.GetHoleIndicesAttr().Get(snapshot) or [])
-            grouped={};matrix=cache.GetLocalToWorldTransform(prim)
-            left_handed=mesh.GetOrientationAttr().Get(snapshot)==UsdGeom.Tokens.leftHanded
+                uv_key=(_prim_identity(uv.GetAttr().GetPrim()),str(uv.GetAttr().GetName())) if uv else None
+                uv_keys.append((index,uv_key))
+                if uv_key not in uv_cache:
+                    uv_cache[uv_key]=(uv.ComputeFlattened(snapshot),str(uv.GetInterpolation())) if uv else (None,"constant")
+                uv_data[index]=uv_cache[uv_key]
+            matrix=transform(cache.GetLocalToWorldTransform(prim))
+            backdrop=prim.GetCustomDataByKey("caustra:environmentBackdrop")
+            if backdrop is not None and not isinstance(backdrop,bool):
+                raise AssetError("caustra:environmentBackdrop must be a boolean")
+            world_displacement=any(any(code[0] in (Op.Position,Op.Normal,Op.Tangent) for code,value in compiler.material_displacements[index][0])
+                                   for index in used_materials if index in compiler.material_displacements)
+            mesh_key=(binding_key,tuple(uv_keys),tuple(matrix) if world_displacement else None)
+            if mesh_key in mesh_cache:
+                if backdrop: bounds_exclusions.update(range(len(asset.instances),len(asset.instances)+len(mesh_cache[mesh_key])))
+                asset.instances.extend((index,matrix) for index in mesh_cache[mesh_key])
+                continue
+            grouped={};vertex_maps={}
             cursor=0
             for face,count in enumerate(counts):
                 corners=list(indices[cursor:cursor+count])
                 if face not in holes:
-                    mat=face_material[face];target=grouped.setdefault(mat,Mesh(mat));base=len(target.vertices)
+                    mat=face_material[face];target=grouped.setdefault(mat,Mesh(mat));vertex_map=vertex_maps.setdefault(mat,{})
                     uv_values,uv_interpolation=uv_data[mat]
+                    mapped=[]
                     for local,vertex in enumerate(corners):
-                        p=points[vertex]
-                        normal=attr_value(normals,normal_interpolation,face,cursor+local,vertex,"normal")
-                        uv=attr_value(uv_values,uv_interpolation,face,cursor+local,vertex,"UV")
-                        if uv is not None and len(uv)!=2: raise AssetError("USD UV primvar must have two components")
-                        target.vertices.append(list(p)+[0]+(list(normal) if normal is not None else [0,0,0])+[0]+(list(uv) if uv is not None else [0,0])+[0,0]+[0,0,0,0])
-                        bounds.append(world_point(matrix,p))
+                        normal_key={"constant":0,"uniform":face,"vertex":vertex,"varying":vertex,"faceVarying":cursor+local}.get(normal_interpolation)
+                        uv_key={"constant":0,"uniform":face,"vertex":vertex,"varying":vertex,"faceVarying":cursor+local}.get(uv_interpolation)
+                        key=(vertex,normal_key if normals else None,uv_key if uv_values else None)
+                        if key not in vertex_map:
+                            p=points[vertex]
+                            normal=attr_value(normals,normal_interpolation,face,cursor+local,vertex,"normal")
+                            uv=attr_value(uv_values,uv_interpolation,face,cursor+local,vertex,"UV")
+                            if uv is not None and len(uv)!=2: raise AssetError("USD UV primvar must have two components")
+                            vertex_map[key]=len(target.vertices)
+                            target.vertices.append(list(p)+[0]+(list(normal) if normal is not None else [0,0,0])+[0]+(list(uv) if uv is not None else [0,0])+[0,0]+[0,0,0,0])
+                        mapped.append(vertex_map[key])
                     for triangle in triangulate([points[i] for i in corners]):
                         a,b,c=triangle
                         if left_handed: b,c=c,b
-                        target.indices.extend([base+a,base+b,base+c])
+                        target.indices.extend([mapped[a],mapped[b],mapped[c]])
                 cursor+=count
+            mesh_cache[mesh_key]=[]
             for target in grouped.values():
                 if target.indices:
                     displacement=compiler.material_displacements.get(target.material)
                     if displacement is not None:
                         from .displacement import displace_mesh
-                        target=displace_mesh(target,displacement,asset.textures,transform(matrix),displacement_subdivisions)
-                    asset.instances.append((len(asset.meshes),transform(matrix)));asset.meshes.append(target)
-    # Geometry displacement can change every extent, so bounds are derived from
-    # final object vertices and the actual world-meter instance transforms.
-    bounds=[]
-    for mesh_index,matrix in asset.instances:
-        for vertex in asset.meshes[mesh_index].vertices:
-            p=vertex[:3]
-            bounds.append([sum(matrix[r*4+c]*p[c] for c in range(3))+matrix[r*4+3] for r in range(3)])
+                        target=displace_mesh(target,displacement,asset.textures,matrix,displacement_subdivisions)
+                    mesh_cache[mesh_key].append(len(asset.meshes))
+                    if backdrop: bounds_exclusions.add(len(asset.instances))
+                    asset.instances.append((len(asset.meshes),matrix));asset.meshes.append(target)
     if not asset.meshes: raise AssetError("USD scene has no visible supported meshes")
-    asset.bounds_min=[min(p[i] for p in bounds) for i in range(3)]+[0]
-    asset.bounds_max=[max(p[i] for p in bounds) for i in range(3)]+[0]
+    # Scan final (possibly displaced) shared geometry once, then transform its
+    # local AABB per instance. Rotated instances can have conservative bounds;
+    # neither memory nor vertex work grows with the expanded instance geometry.
+    local_bounds=[]
+    for mesh in asset.meshes:
+        low=[min(v[i] for v in mesh.vertices) for i in range(3)]
+        high=[max(v[i] for v in mesh.vertices) for i in range(3)]
+        local_bounds.append(([(a+b)*.5 for a,b in zip(low,high)],[(b-a)*.5 for a,b in zip(low,high)]))
+    bounds_min=[math.inf]*3;bounds_max=[-math.inf]*3
+    for instance_index,(mesh_index,matrix) in enumerate(asset.instances):
+        if instance_index in bounds_exclusions and len(bounds_exclusions)<len(asset.instances): continue
+        center,extent=local_bounds[mesh_index]
+        for r in range(3):
+            position=sum(matrix[r*4+c]*center[c] for c in range(3))+matrix[r*4+3]
+            radius=sum(abs(matrix[r*4+c])*extent[c] for c in range(3))
+            bounds_min[r]=min(bounds_min[r],position-radius);bounds_max[r]=max(bounds_max[r],position+radius)
+    asset.bounds_min=bounds_min+[0]
+    asset.bounds_max=bounds_max+[0]
     center=[(a+b)*0.5 for a,b in zip(asset.bounds_min[:3],asset.bounds_max[:3])]
     if asset.has_camera and not camera_has_focus:
         position=asset.camera[:3];forward=[asset.camera[4+i]-position[i] for i in range(3)]

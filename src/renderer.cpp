@@ -1,6 +1,7 @@
 // Vulkan Ray Query backend adapted from the vk_gltf_renderer rendering architecture.
 // Scene import and application/editor state remain outside this library.
 #include <caustra/renderer.hpp>
+#include <caustra/vulkan.hpp>
 #include "shader_types.hpp"
 #include "pathtrace_spv.hpp"
 #include <vulkan/vulkan.h>
@@ -10,6 +11,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <functional>
@@ -130,13 +133,14 @@ struct SceneResources {
   Buffer materialInstructions, textureInfos, texturePixels, materialMediumTable;
   std::vector<Acceleration> blas;
   Acceleration tlas;
-  uint32_t lightCount=0, materialInitX=0, materialInitY=0; float totalArea=0;
+  uint32_t lightCount=0, materialInitX=0, materialInitY=0;
   bool hasMedia=false, materialMediumDirty=true;
   std::vector<uint32_t> heterogeneousInstances;
 };
 }
 
 struct Renderer::Impl {
+  VulkanDeviceOptions vulkanOptions;
   VkInstance instance{}; VkDebugUtilsMessengerEXT messenger{};
   VkPhysicalDevice physical{}; VkPhysicalDeviceProperties properties{};
   VkPhysicalDeviceMemoryProperties memoryProperties{};
@@ -153,7 +157,10 @@ struct Renderer::Impl {
   uint64_t maxPrimitiveCount=0, maxInstanceCount=0;
   std::atomic<uint32_t> validationErrors{0};
   RenderSettings settings; Camera camera, previousCamera; uint32_t samples=0;
+  RendererOptions rendererOptions;
+  RendererDiagnostics diagnostics;
   uint64_t frames=0;
+  std::chrono::steady_clock::time_point previousFrameStart{};
   DlssSettings dlss;
   VkExtent2D renderSize{640,480};
   bool dlssExtensions=false;
@@ -164,8 +171,8 @@ struct Renderer::Impl {
   std::unique_ptr<DlssBackend> denoiser;
 #endif
   std::unique_ptr<SceneResources> scene;
-  Buffer output, guides, denoisedOutput, rawReadback, cameraHistory, renderErrors, cameraMediumCache;
-  bool rawReadbackCurrent=false, cameraMediumDirty=true;
+  Buffer output, guides, denoisedOutput, rawReadback, denoisedReadback, cameraHistory, renderErrors, cameraMediumCache;
+  bool rawReadbackCurrent=false, denoisedReadbackCurrent=false, cameraMediumDirty=true;
 
   ~Impl() {
     if(device) vkDeviceWaitIdle(device);
@@ -173,7 +180,7 @@ struct Renderer::Impl {
     denoiser.reset();
     dlssSession.reset();
 #endif
-    scene.reset(); output.clear(); guides.clear(); denoisedOutput.clear(); rawReadback.clear();
+    scene.reset(); output.clear(); guides.clear(); denoisedOutput.clear(); rawReadback.clear(); denoisedReadback.clear();
     cameraHistory.clear(); renderErrors.clear(); cameraMediumCache.clear();
     if(pipeline) vkDestroyPipeline(device,pipeline,nullptr);
     if(pipelineLayout) vkDestroyPipelineLayout(device,pipelineLayout,nullptr);
@@ -182,17 +189,25 @@ struct Renderer::Impl {
     if(fence) vkDestroyFence(device,fence,nullptr);
     if(commandPool) vkDestroyCommandPool(device,commandPool,nullptr);
     if(device) vkDestroyDevice(device,nullptr);
+    if(instance && vulkanOptions.instanceDestroying) vulkanOptions.instanceDestroying(instance);
     if(messenger) {
       auto fn=reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(instance,"vkDestroyDebugUtilsMessengerEXT"));
       if(fn) fn(instance,messenger,nullptr);
     }
-    if(instance) vkDestroyInstance(instance,nullptr);
+    if(instance) {
+      vkDestroyInstance(instance,nullptr);
+    }
   }
   static VKAPI_ATTR VkBool32 VKAPI_CALL debug(VkDebugUtilsMessageSeverityFlagBitsEXT severity,VkDebugUtilsMessageTypeFlagsEXT,const VkDebugUtilsMessengerCallbackDataEXT* data,void* user) {
     if(severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) ++static_cast<Impl*>(user)->validationErrors;
     std::cerr << "[Vulkan validation] " << data->pMessage << '\n'; return VK_FALSE;
   }
   void init(const RendererOptions& options) {
+    if(options.mediumErrorPolicy!=MediumErrorPolicy::Strict && options.mediumErrorPolicy!=MediumErrorPolicy::SkipInvalidPath)
+      throw std::invalid_argument("Unknown medium error policy");
+    if(!std::isfinite(options.mediumBoundaryTolerance) || options.mediumBoundaryTolerance<0)
+      throw std::invalid_argument("Medium boundary tolerance must be finite and nonnegative (meters)");
+    rendererOptions=options;
     const char* validation="VK_LAYER_KHRONOS_validation";
     if(options.validation) {
       uint32_t count=0; check(vkEnumerateInstanceLayerProperties(&count,nullptr),"Enumerate layers");
@@ -208,6 +223,10 @@ struct Renderer::Impl {
     const char* debugExt=VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
     std::vector<std::string> instanceExtensions;
     if(options.validation) instanceExtensions.emplace_back(debugExt);
+    for(const auto& extension:vulkanOptions.instanceExtensions) {
+      if(extension.empty()) throw std::invalid_argument("Vulkan instance extension name must not be empty");
+      if(std::find(instanceExtensions.begin(),instanceExtensions.end(),extension)==instanceExtensions.end()) instanceExtensions.push_back(extension);
+    }
 #if CAUSTRA_HAS_DLSS
     try {
       uint32_t n=0; check(vkEnumerateInstanceExtensionProperties(nullptr,&n,nullptr),"Enumerate instance extensions");
@@ -229,6 +248,7 @@ struct Renderer::Impl {
       if(!fn) throw std::runtime_error("VK_EXT_debug_utils unavailable");
       check(fn(instance,&debugInfo,nullptr,&messenger),"Create debug messenger");
     }
+    if(vulkanOptions.instanceCreated) vulkanOptions.instanceCreated(instance);
     const char* extensions[]={VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,VK_KHR_RAY_QUERY_EXTENSION_NAME,VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME};
     uint32_t count=0; check(vkEnumeratePhysicalDevices(instance,&count,nullptr),"Enumerate GPUs");
     std::vector<VkPhysicalDevice> devices(count); check(vkEnumeratePhysicalDevices(instance,&count,devices.data()),"Enumerate GPUs");
@@ -240,6 +260,10 @@ struct Renderer::Impl {
       std::vector<VkExtensionProperties> available(n); check(vkEnumerateDeviceExtensionProperties(candidate,nullptr,&n,available.data()),"Enumerate GPU extensions");
       bool supported=true;
       for(auto ext:extensions) supported &= std::any_of(available.begin(),available.end(),[&](auto p){return std::strcmp(ext,p.extensionName)==0;});
+      for(const auto& ext:vulkanOptions.deviceExtensions) {
+        if(ext.empty()) throw std::invalid_argument("Vulkan device extension name must not be empty");
+        supported &= std::any_of(available.begin(),available.end(),[&](auto p){return ext==p.extensionName;});
+      }
       VkPhysicalDeviceRayQueryFeaturesKHR rq{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
       VkPhysicalDeviceAccelerationStructureFeaturesKHR as{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR}; as.pNext=&rq;
       VkPhysicalDeviceVulkan12Features f12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES}; f12.pNext=&as;
@@ -247,6 +271,7 @@ struct Renderer::Impl {
       if(!supported || !rq.rayQuery || !as.accelerationStructure || !f12.bufferDeviceAddress) continue;
       vkGetPhysicalDeviceQueueFamilyProperties(candidate,&n,nullptr); std::vector<VkQueueFamilyProperties> families(n); vkGetPhysicalDeviceQueueFamilyProperties(candidate,&n,families.data());
       for(uint32_t i=0;i<n;++i) if(families[i].queueFlags&VK_QUEUE_COMPUTE_BIT) {
+        if(vulkanOptions.supportsQueue && !vulkanOptions.supportsQueue(candidate,i)) continue;
         int score=(props.deviceType==VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU?10:1)+(props.vendorID==0x10de?4:0)+(families[i].queueFlags&VK_QUEUE_GRAPHICS_BIT?1:0);
         if(score>best) { best=score; physical=candidate; properties=props; queueFamily=i; }
       }
@@ -263,6 +288,8 @@ struct Renderer::Impl {
     VkPhysicalDeviceAccelerationStructureFeaturesKHR as{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR}; as.accelerationStructure=VK_TRUE; as.pNext=&rq;
     VkPhysicalDeviceVulkan12Features f12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES}; f12.bufferDeviceAddress=VK_TRUE; f12.pNext=&as;
     std::vector<std::string> deviceExtensions(std::begin(extensions),std::end(extensions));
+    for(const auto& ext:vulkanOptions.deviceExtensions)
+      if(std::find(deviceExtensions.begin(),deviceExtensions.end(),ext)==deviceExtensions.end()) deviceExtensions.push_back(ext);
 #if CAUSTRA_HAS_DLSS
     if(dlssExtensions) {
       try {
@@ -305,7 +332,7 @@ struct Renderer::Impl {
     VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO}; check(vkCreateFence(device,&fci,nullptr,&fence),"Create fence");
     createPipeline();
     cameraHistory=buffer(sizeof(GpuCameraHistory),VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
-    renderErrors=buffer(64,VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    renderErrors=buffer(kRenderDiagnosticWords*sizeof(uint32_t),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     cameraMediumCache=buffer(sizeof(GpuCameraMediumCache),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,BufferMemory::Device);
     resizeOutput(settings,dlss);
   }
@@ -458,13 +485,14 @@ struct Renderer::Impl {
     Buffer nextDenoised;
 #if CAUSTRA_HAS_DLSS
     if(candidate) {
-      nextDenoised=buffer(VkDeviceSize(desired.width)*desired.height*sizeof(Float4),VK_BUFFER_USAGE_TRANSFER_DST_BIT,BufferMemory::Readback);
+      nextDenoised=buffer(VkDeviceSize(desired.width)*desired.height*sizeof(Float4),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT|VK_BUFFER_USAGE_TRANSFER_SRC_BIT,BufferMemory::Device);
       submit([&](VkCommandBuffer cmd){candidate->configure(cmd,extent,{desired.width,desired.height},desiredDlss.quality,desiredDlss.preset);});
     }
     denoiser=std::move(candidate);
 #endif
     output=std::move(next); guides=std::move(nextGuides); denoisedOutput=std::move(nextDenoised);
     rawReadback.clear();
+    denoisedReadback.clear();
     renderSize=extent; settings=desired; dlss=desiredDlss; resetHistory(); descriptors();
   }
   void upload(const Scene& input) {
@@ -480,10 +508,17 @@ struct Renderer::Impl {
     }
     std::vector<Vertex> vertices; std::vector<uint32_t> indices;
     std::vector<Uint4> meshOffsets;
+    std::vector<std::pair<Float4,Float4>> meshBounds;
     for(const auto& mesh:input.meshes) {
       if(vertices.size()+mesh.vertices.size()>UINT32_MAX || indices.size()+mesh.indices.size()>UINT32_MAX) throw std::invalid_argument("Scene exceeds 32-bit geometry indexing");
       meshOffsets.push_back({static_cast<uint32_t>(vertices.size()),static_cast<uint32_t>(indices.size()),mesh.material,0});
       vertices.insert(vertices.end(),mesh.vertices.begin(),mesh.vertices.end()); indices.insert(indices.end(),mesh.indices.begin(),mesh.indices.end());
+      Float4 low=mesh.vertices.front().position,high=low;
+      for(const auto& v:mesh.vertices) {
+        low={std::min(low.x,v.position.x),std::min(low.y,v.position.y),std::min(low.z,v.position.z),0};
+        high={std::max(high.x,v.position.x),std::max(high.y,v.position.y),std::max(high.z,v.position.z),0};
+      }
+      meshBounds.emplace_back(low,high);
     }
     auto usage=VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR|VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
     next->vertices=stageBuffer(vertices.size()*sizeof(Vertex),usage,vertices.data(),pending);
@@ -540,6 +575,16 @@ struct Renderer::Impl {
       next->blas.push_back(build(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,geo,static_cast<uint32_t>(mesh.indices.size()/3)));
     }
     std::vector<GpuInstance> instanceData; std::vector<VkAccelerationStructureInstanceKHR> asInstances; std::vector<GpuLight> lights;
+    std::vector<double> lightWeights,emissionWeights(input.materials.size());
+    for(size_t index=0;index<input.materials.size();++index) {
+      const auto& material=input.materials[index];bool dynamic=false;
+      for(uint32_t instruction=0;instruction<material.program.y;++instruction) {
+        const auto& op=input.materialInstructions[material.program.x+instruction].code;
+        dynamic|=op.x==uint32_t(MaterialOp::Output) && op.z==uint32_t(MaterialParameter::Emission);
+      }
+      const double luminance=.2126*material.emission.x+.7152*material.emission.y+.0722*material.emission.z;
+      emissionWeights[index]=luminance>0?luminance:(dynamic?1.0:0.0);
+    }
     if(input.instances.size()>0x1000000) throw std::invalid_argument("Too many instances for Vulkan's 24-bit custom index");
     for(size_t n=0;n<input.instances.size();++n) {
       const auto& i=input.instances[n]; const auto& mesh=input.meshes[i.mesh]; const auto& mat=input.materials[mesh.material];
@@ -553,11 +598,11 @@ struct Renderer::Impl {
         auto& r=gpu.worldToObject[row];r.w=-(r.x*m[3]+r.y*m[7]+r.z*m[11]);
         gpu.objectToWorld[row]={m[row*4],m[row*4+1],m[row*4+2],m[row*4+3]};
       }
-      gpu.objectMin=gpu.objectMax=mesh.vertices.front().position;
-      for(const auto& v:mesh.vertices) {
-        gpu.objectMin={std::min(gpu.objectMin.x,v.position.x),std::min(gpu.objectMin.y,v.position.y),std::min(gpu.objectMin.z,v.position.z),0};
-        gpu.objectMax={std::max(gpu.objectMax.x,v.position.x),std::max(gpu.objectMax.y,v.position.y),std::max(gpu.objectMax.z,v.position.z),0};
-      }
+      gpu.objectMin=meshBounds[i.mesh].first;gpu.objectMax=meshBounds[i.mesh].second;
+      const double emissionWeight=emissionWeights[mesh.material];
+      if(emissionWeight>0 && lights.size()+mesh.indices.size()/3>=kLightSelectionTickets)
+        throw std::invalid_argument("Emitter triangle count exceeds the 24-bit selection ticket capacity");
+      gpu.objectMin.w=std::bit_cast<float>(emissionWeight>0?static_cast<uint32_t>(lights.size()):UINT32_MAX);
       if(mat.program.w&1) {
         const uint64_t base=(uint64_t(input.materials.size())+uint64_t(next->heterogeneousInstances.size())*kMediumGridCells)*8;
         if(base+uint64_t(kMediumGridCells)*8>UINT32_MAX) throw std::invalid_argument("Heterogeneous medium grid exceeds 32-bit row addressing");
@@ -566,20 +611,17 @@ struct Renderer::Impl {
       instanceData.push_back(gpu);
       VkAccelerationStructureInstanceKHR vi{}; std::memcpy(vi.transform.matrix,i.transform.data(),sizeof(vi.transform.matrix));
       vi.instanceCustomIndex=static_cast<uint32_t>(n); vi.mask=0xFF; vi.flags=VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR; vi.accelerationStructureReference=address(next->blas[i.mesh]); asInstances.push_back(vi);
-      bool emitter=std::max({mat.emission.x,mat.emission.y,mat.emission.z})>0;
-      for(uint32_t instruction=0;instruction<mat.program.y;++instruction) {
-        const auto& op=input.materialInstructions[mat.program.x+instruction].code;
-        emitter |= op.x==uint32_t(MaterialOp::Output) && op.z==uint32_t(MaterialParameter::Emission);
-      }
-      if(emitter) for(size_t t=0;t<mesh.indices.size();t+=3) {
+      if(emissionWeight>0) for(size_t t=0;t<mesh.indices.size();t+=3) {
         auto a=transform(i,mesh.vertices[mesh.indices[t]].position), b=transform(i,mesh.vertices[mesh.indices[t+1]].position), c=transform(i,mesh.vertices[mesh.indices[t+2]].position);
         auto e1=sub(b,a),e2=sub(c,a); float area=length(cross(e1,e2))*0.5f;
-        next->totalArea+=area;
-        if(!std::isfinite(next->totalArea) || !(area>0)) throw std::invalid_argument("Transformed light area is invalid");
-        a.w=area; e1.w=next->totalArea; e2.w=instanceOrientation(i);
+        if(!std::isfinite(area) || !(area>0)) throw std::invalid_argument("Transformed light area is invalid");
+        lightWeights.push_back(double(area)*emissionWeight);
+        a.w=area;e2.w=instanceOrientation(i);
         const auto offset=meshOffsets[i.mesh].x;
+        auto normal0=transformNormal(i,mesh.vertices[mesh.indices[t]].normal);
+        normal0.w=std::bit_cast<float>(static_cast<uint32_t>(n));
         lights.push_back({a,e1,e2,{offset+mesh.indices[t],offset+mesh.indices[t+1],offset+mesh.indices[t+2],mesh.material},
-                          transformNormal(i,mesh.vertices[mesh.indices[t]].normal),
+                          normal0,
                           transformNormal(i,mesh.vertices[mesh.indices[t+1]].normal),
                           transformNormal(i,mesh.vertices[mesh.indices[t+2]].normal),
                           transformTangent(i,mesh.vertices[mesh.indices[t]].tangent),
@@ -587,6 +629,7 @@ struct Renderer::Impl {
                           transformTangent(i,mesh.vertices[mesh.indices[t+2]].tangent)});
       }
     }
+    buildLightCdf(lights,lightWeights);
     next->lightCount=static_cast<uint32_t>(lights.size());
     const VkDeviceSize mediumBytes=(VkDeviceSize(input.materials.size())+VkDeviceSize(next->heterogeneousInstances.size())*kMediumGridCells)*sizeof(GpuMaterialMediumData);
     if(mediumBytes>properties.limits.maxStorageBufferRange) throw std::invalid_argument("Heterogeneous medium grids exceed this GPU's storage buffer range");
@@ -600,20 +643,20 @@ struct Renderer::Impl {
     next->tlas=build(VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,geo,static_cast<uint32_t>(asInstances.size()));
     scene=std::move(next); cameraMediumDirty=true; resetHistory(); descriptors();
   }
-  void resetHistory() { samples=0; frames=0; rawReadbackCurrent=false; }
-  void prepareRawReadback() {
-    if(rawReadbackCurrent) return;
-    if(!rawReadback.handle || rawReadback.size!=output.size)
-      rawReadback=buffer(output.size,VK_BUFFER_USAGE_TRANSFER_DST_BIT,BufferMemory::Readback);
+  void resetHistory() { samples=0; frames=0; rawReadbackCurrent=denoisedReadbackCurrent=false; }
+  void prepareReadback(const Buffer& source,Buffer& readback,bool& current) {
+    if(current) return;
+    if(!readback.handle || readback.size!=source.size)
+      readback=buffer(source.size,VK_BUFFER_USAGE_TRANSFER_DST_BIT,BufferMemory::Readback);
     submit([&](VkCommandBuffer cmd) {
-      barrier(cmd,VK_PIPELINE_STAGE_HOST_BIT|VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,
-              VK_ACCESS_HOST_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT|VK_ACCESS_TRANSFER_WRITE_BIT);
-      const VkBufferCopy copy{0,0,output.size};
-      vkCmdCopyBuffer(cmd,output.handle,rawReadback.handle,1,&copy);
+      barrier(cmd,VK_PIPELINE_STAGE_HOST_BIT|VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,
+              VK_ACCESS_HOST_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT|VK_ACCESS_TRANSFER_WRITE_BIT,VK_ACCESS_TRANSFER_READ_BIT|VK_ACCESS_TRANSFER_WRITE_BIT);
+      const VkBufferCopy copy{0,0,source.size};
+      vkCmdCopyBuffer(cmd,source.handle,readback.handle,1,&copy);
       barrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,VK_ACCESS_TRANSFER_WRITE_BIT,VK_ACCESS_HOST_READ_BIT);
     });
-    rawReadback.invalidate();
-    rawReadbackCurrent=true;
+    readback.invalidate();
+    current=true;
   }
   PushConstants constants() const {
     const auto forward=cameraDirection(camera.target,camera.position);
@@ -624,11 +667,14 @@ struct Renderer::Impl {
     p.environment=settings.environment; p.environment.w=scene->hasMedia?1.0f:0.0f;
     p.dimensions={renderSize.width,renderSize.height,samples,settings.maxBounces}; p.counts={scene->lightCount,dlss.enabled?1u:0u,static_cast<uint32_t>(frames),frames?1u:0u};
     uint32_t jitterIndex=static_cast<uint32_t>(frames%64)+1;
-    p.params={scene->totalArea,0.0001f,dlss.enabled?halton(jitterIndex,2)-0.5f:0,dlss.enabled?halton(jitterIndex,3)-0.5f:0}; return p;
+    p.params={scene->lightCount?float(kLightSelectionTickets):0,0.0001f,dlss.enabled?halton(jitterIndex,2)-0.5f:0,dlss.enabled?halton(jitterIndex,3)-0.5f:0}; return p;
   }
 };
 
 Renderer::Renderer(const RendererOptions& options):impl_(std::make_unique<Impl>()) { impl_->init(options); }
+Renderer::Renderer(const RendererOptions& options,const VulkanDeviceOptions& vulkan):impl_(std::make_unique<Impl>()) {
+  impl_->vulkanOptions=vulkan; impl_->init(options);
+}
 Renderer::~Renderer()=default;
 void Renderer::setScene(const Scene& scene) { impl_->upload(scene); }
 void Renderer::setCamera(const Camera& camera) {
@@ -642,7 +688,7 @@ void Renderer::updateCamera(const Camera& camera) {
   if(!sameCameraOrigin(impl_->camera,camera)) impl_->cameraMediumDirty=true;
   impl_->camera=camera;
   impl_->samples=0;
-  impl_->rawReadbackCurrent=false;
+  impl_->rawReadbackCurrent=impl_->denoisedReadbackCurrent=false;
 }
 void Renderer::setSettings(const RenderSettings& settings) {
   validateSettings(settings); impl_->resizeOutput(settings,impl_->dlss);
@@ -661,15 +707,17 @@ void Renderer::render(uint32_t count) {
   if(count>UINT32_MAX-impl_->samples) throw std::overflow_error("Sample counter overflow");
   if(count>UINT64_MAX-impl_->frames) throw std::overflow_error("Frame counter overflow");
   for(uint32_t i=0;i<count;++i) {
+    const auto frameStart=std::chrono::steady_clock::now();
     auto p=impl_->constants();
+    if(impl_->rendererOptions.mediumErrorPolicy==MediumErrorPolicy::SkipInvalidPath) p.counts.w|=kSkipInvalidMediumPath;
     const auto current=makeCameraTransforms(impl_->camera,impl_->settings.width,impl_->settings.height);
     const auto previous=impl_->frames?makeCameraTransforms(impl_->previousCamera,impl_->settings.width,impl_->settings.height):current;
-    const GpuCameraHistory history{current.worldToClip,previous.worldToClip};
+    const GpuCameraHistory history{current.worldToClip,previous.worldToClip,{impl_->rendererOptions.mediumBoundaryTolerance,0,0,0}};
     std::memcpy(impl_->cameraHistory.mapped,&history,sizeof(history));
     impl_->cameraHistory.flush();
-    std::memset(impl_->renderErrors.mapped,0,64);
+    std::memset(impl_->renderErrors.mapped,0,kRenderDiagnosticWords*sizeof(uint32_t));
     impl_->renderErrors.flush();
-    impl_->rawReadbackCurrent=false;
+    impl_->rawReadbackCurrent=impl_->denoisedReadbackCurrent=false;
     const bool initializeMaterials=impl_->scene->materialMediumDirty;
     const bool initializeMedium=impl_->cameraMediumDirty && impl_->scene->hasMedia;
     impl_->submit([&](VkCommandBuffer cmd){
@@ -698,20 +746,28 @@ void Renderer::render(uint32_t count) {
       }
       vkCmdPushConstants(cmd,impl_->pipelineLayout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(p),&p); vkCmdDispatch(cmd,(p.dimensions.x+7)/8,(p.dimensions.y+7)/8,1);
 #if CAUSTRA_HAS_DLSS
-      if(impl_->denoiser) impl_->denoiser->evaluate(cmd,impl_->guides.handle,impl_->denoisedOutput.handle,impl_->frames==0,p.params.z,p.params.w,current.view,current.projection);
+      if(impl_->denoiser) {
+        // Include readback, presentation and frame limiting between submissions:
+        // NGX uses elapsed time with pixel motion to estimate temporal response.
+        const float frameTime=impl_->frames?std::chrono::duration<float,std::milli>(frameStart-impl_->previousFrameStart).count():1000.0f/60.0f;
+        impl_->denoiser->evaluate(cmd,impl_->guides.handle,impl_->denoisedOutput.handle,impl_->frames==0,p.params.z,p.params.w,current.view,current.projection,frameTime);
+      }
 #endif
       Impl::barrier(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,VK_ACCESS_SHADER_WRITE_BIT,VK_ACCESS_HOST_READ_BIT);
     });
     impl_->renderErrors.invalidate();
-    uint32_t errors=0;
-    std::memcpy(&errors,impl_->renderErrors.mapped,sizeof(errors));
+    std::array<uint32_t,kRenderDiagnosticWords> diagnostic{};
+    std::memcpy(diagnostic.data(),impl_->renderErrors.mapped,sizeof(diagnostic));
+    impl_->diagnostics.invalidMediumBoundaries+=diagnostic[16];
+    impl_->diagnostics.skippedNearMediumBoundaries+=diagnostic[17];
+    const uint32_t errors=impl_->rendererOptions.mediumErrorPolicy==MediumErrorPolicy::SkipInvalidPath?
+      diagnostic[0]&~2u:diagnostic[0];
     if(errors) {
       impl_->resetHistory();
       if(errors&1) throw std::runtime_error("Medium nesting exceeds the supported depth of 16");
       if(errors&2) {
-        uint32_t diagnostic[16];std::memcpy(diagnostic,impl_->renderErrors.mapped,sizeof(diagnostic));
-        float point[4];std::memcpy(point,diagnostic+4,sizeof(point));
-        float origin[3],direction[3];std::memcpy(origin,diagnostic+8,sizeof(origin));std::memcpy(direction,diagnostic+11,sizeof(direction));
+        float point[4];std::memcpy(point,diagnostic.data()+4,sizeof(point));
+        float origin[3],direction[3];std::memcpy(origin,diagnostic.data()+8,sizeof(origin));std::memcpy(direction,diagnostic.data()+11,sizeof(direction));
         std::ostringstream message;
         message<<std::setprecision(std::numeric_limits<float>::max_digits10)
           <<"Invalid medium boundary nesting: site="<<diagnostic[1]<<", instance="<<diagnostic[2]
@@ -731,23 +787,36 @@ void Renderer::render(uint32_t count) {
     ++impl_->samples;
     ++impl_->frames;
     impl_->previousCamera=impl_->camera;
+    impl_->previousFrameStart=frameStart;
   }
 }
 Image Renderer::readback() {
   if(!impl_->dlss.enabled) return readbackRaw();
   if(!impl_->samples) throw std::logic_error("Render at least one sample before readback");
   Image image; image.width=impl_->settings.width; image.height=impl_->settings.height; image.samples=impl_->samples;
-  impl_->denoisedOutput.invalidate();
-  image.pixels.resize(size_t(image.width)*image.height); std::memcpy(image.pixels.data(),impl_->denoisedOutput.mapped,image.pixels.size()*sizeof(Float4)); return image;
+  impl_->prepareReadback(impl_->denoisedOutput,impl_->denoisedReadback,impl_->denoisedReadbackCurrent);
+  image.pixels.resize(size_t(image.width)*image.height); std::memcpy(image.pixels.data(),impl_->denoisedReadback.mapped,image.pixels.size()*sizeof(Float4)); return image;
 }
 Image Renderer::readbackRaw() {
   if(!impl_->samples) throw std::logic_error("Render at least one sample before readback");
   Image image; image.width=impl_->renderSize.width; image.height=impl_->renderSize.height; image.samples=impl_->samples;
-  impl_->prepareRawReadback();
+  impl_->prepareReadback(impl_->output,impl_->rawReadback,impl_->rawReadbackCurrent);
   image.pixels.resize(size_t(image.width)*image.height); std::memcpy(image.pixels.data(),impl_->rawReadback.mapped,image.pixels.size()*sizeof(Float4)); return image;
 }
 uint32_t Renderer::sampleCount() const { return impl_->samples; }
 uint64_t Renderer::frameCount() const { return impl_->frames; }
 std::string Renderer::deviceName() const { return impl_->properties.deviceName; }
 uint32_t Renderer::validationErrorCount() const { return impl_->validationErrors.load(); }
+RendererDiagnostics Renderer::diagnostics() const { return impl_->diagnostics; }
+VulkanContext VulkanAccess::context(Renderer& renderer) {
+  const auto& impl=*renderer.impl_;
+  return {impl.instance,impl.physical,impl.device,impl.queue,impl.queueFamily};
+}
+VulkanFrame VulkanAccess::output(Renderer& renderer) {
+  const auto& impl=*renderer.impl_;
+  if(!impl.samples) throw std::logic_error("Render at least one sample before accessing GPU output");
+  return {impl.dlss.enabled?impl.denoisedOutput.handle:impl.output.handle,
+          impl.dlss.enabled?impl.settings.width:impl.renderSize.width,
+          impl.dlss.enabled?impl.settings.height:impl.renderSize.height};
+}
 } // namespace caustra

@@ -1,0 +1,2 @@
+# Preserve official ShaderGen bytes, including upstream trailing spaces, for provenance hashes.
+shaders/generated/* text eol=lf whitespace=-blank-at-eol

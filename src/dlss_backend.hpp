@@ -43,12 +43,15 @@ public:
 
   // Guides contain planar images: RGBA32F color/diffuse/specular/normal+roughness,
   // RG32F motion, R32F linear depth, R32F specular hit distance (80 bytes/pixel).
-  // Output is tightly packed RGBA32F at the display extent. Matrices use the
+  // Output is a device-local transfer-destination/storage buffer containing
+  // tightly packed RGBA32F at the display extent. No host transfer is recorded.
+  // Matrices use the
   // column-vector convention in row-major memory (transposed to NGX's row-vector
   // convention). Jitter is the actual sample offset in pixels (negated for NGX).
+  // frameTimeMs is elapsed wall time between the current and previous frames.
   void evaluate(VkCommandBuffer cmd, VkBuffer guides, VkBuffer output, bool reset,
                 float jitterX, float jitterY, const std::array<float,16>& view,
-                const std::array<float,16>& projection);
+                const std::array<float,16>& projection, float frameTimeMs);
 
 private:
   struct Impl;

@@ -9,6 +9,9 @@
 
 namespace caustra {
 
+struct VulkanDeviceOptions;
+class VulkanAccess;
+
 struct alignas(16) Float4 { float x = 0, y = 0, z = 0, w = 0; };
 struct alignas(16) Uint4 { uint32_t x = 0, y = 0, z = 0, w = 0; };
 struct Vertex { Float4 position; Float4 normal; Float4 texcoord; Float4 tangent; }; // tangent.w: handedness; zero tangent derives it from UVs
@@ -112,7 +115,21 @@ struct RenderSettings {
   uint32_t maxBounces = 8;
   Float4 environment{0.03f, 0.03f, 0.03f, 0}; // constant linear radiance
 };
-struct RendererOptions { bool validation = false; };
+enum class MediumErrorPolicy { Strict, SkipInvalidPath };
+struct RendererOptions {
+  bool validation = false;
+  MediumErrorPolicy mediumErrorPolicy = MediumErrorPolicy::Strict;
+  // Meters. In SkipInvalidPath mode, mismatched crossings this close to the
+  // preceding boundary/ray origin are zero-length contacts; zero disables it.
+  // Valid boundaries, including thinner solids, retain their normal transport.
+  float mediumBoundaryTolerance = 0.001f;
+};
+struct RendererDiagnostics {
+  // Event totals for the renderer lifetime, including shadow/camera probes.
+  // These survive accumulation resets; they are not counts of affected pixels.
+  uint64_t invalidMediumBoundaries = 0;
+  uint64_t skippedNearMediumBoundaries = 0;
+};
 enum class DlssQuality { Native, Quality, Balanced, Performance };
 enum class DlssPreset : uint32_t { Default = 0, D = 4, E = 5 };
 struct DlssSettings {
@@ -131,6 +148,8 @@ struct Image {
 class Renderer {
 public:
   explicit Renderer(const RendererOptions& options = {});
+  // Optional native integration; definitions are in <caustra/vulkan.hpp>.
+  Renderer(const RendererOptions& options, const VulkanDeviceOptions& vulkan);
   ~Renderer();
   Renderer(const Renderer&) = delete;
   Renderer& operator=(const Renderer&) = delete;
@@ -155,7 +174,9 @@ public:
   uint64_t frameCount() const; // frames since full reset; updateCamera preserves it
   std::string deviceName() const;
   uint32_t validationErrorCount() const;
+  RendererDiagnostics diagnostics() const;
 private:
+  friend class VulkanAccess;
   struct Impl;
   std::unique_ptr<Impl> impl_;
 };

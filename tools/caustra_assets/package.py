@@ -11,6 +11,7 @@ There are no absolute paths, external resources, native pointers or padding.
 from pathlib import Path
 import math
 import struct
+import numpy as np
 from .model import Asset, AssetError, Material, Mesh, Texture
 
 MAGIC = b"CAUSTRA\0"
@@ -23,6 +24,14 @@ def _floats(values):
     if not all(math.isfinite(float(v)) for v in values):
         raise AssetError("Package contains nonfinite numeric values")
     return struct.pack("<%df" % len(values), *values)
+
+
+def _write_rows(out,values,columns):
+    """Batch large geometry/images without per-vertex Python pack calls."""
+    data=np.asarray(values,dtype="<f4")
+    if data.ndim!=2 or data.shape[1]!=columns or not np.isfinite(data).all():
+        raise AssetError("Invalid/nonfinite numeric rows in package")
+    out.write(np.ascontiguousarray(data).tobytes())
 
 
 def write_asset(asset, path):
@@ -46,12 +55,10 @@ def write_asset(asset, path):
             if not texture.width or not texture.height or texture.width*texture.height!=len(texture.pixels) or any(len(p)!=4 for p in texture.pixels):
                 raise AssetError("Texture dimensions do not match its pixels")
             out.write(struct.pack("<2I",texture.width,texture.height))
-            out.write(_floats([v for p in texture.pixels for v in p]))
+            _write_rows(out,texture.pixels,4)
         for mesh in asset.meshes:
             out.write(struct.pack("<3I",mesh.material,len(mesh.vertices),len(mesh.indices)))
-            for vertex in mesh.vertices:
-                if len(vertex)!=16: raise AssetError("Invalid vertex layout")
-                out.write(_floats(vertex))
+            _write_rows(out,mesh.vertices,16)
             out.write(struct.pack("<%dI" % len(mesh.indices),*mesh.indices))
         for mesh,transform in asset.instances:
             if len(transform)!=12: raise AssetError("Instance transform must contain 12 affine values")

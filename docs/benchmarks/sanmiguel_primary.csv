@@ -1,0 +1,2 @@
+variant,meshes,instances,shared_triangles,instanced_triangles,mode,width,height,bounces,frames,render_only,render_ms,readback_ms,tonemap_ms,total_ms,p95_ms,equivalent_fps,checksum,invalid_boundaries,near_skips
+original,846,160332,2513470,10504888,off,640,427,24,40,1,0.340,0.000,0.000,0.340,0.384,2944.207,2909569184877,0,0

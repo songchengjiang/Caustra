@@ -1,5 +1,34 @@
 # MaterialX noise provenance
 
+## Generated surface backend
+
+`shaders/generated/` is produced by `tools/generate_materialx_surfaces.py` using
+the official v1.39.5 `SlangShaderGenerator`. The generator clones the upstream
+six model graphs with BSDF/EDF terminals and records source and artifact SHA-256
+in `materialx_surfaces.json`. This replaces the ordinary surface reflection and
+emission evaluators; the core still owns parameter IR, sampling/PDF and physical
+dielectric/SSS/volume transport. The generated source is covered by the upstream
+Apache-2.0 license reproduced in this directory.
+
+Compute adapters remove raster entry points/resources, namespace symbols and
+prefix macros; use analytic directional albedo; disable the screen-curvature
+SSS helper (actual SSS uses the core random walk); floor GGX roughness at 0.02;
+map folded emission and OpenPBR film units; and bypass a second USD normalmap
+conversion because the parameter IR already supplies world normals. Original
+MaterialX source files are not modified. The full adaptation list is in the
+generated manifest and `docs/materialx_backend.md`.
+
+Standard Surface's coat rotation input is promoted to a per-hit coat tangent
+to preserve the existing renderer-neutral `CoatTangent` IR output. Without that
+explicit output the parameter interpreter follows the authored base tangent,
+as the official graph does. The rotation and normalization math is unchanged.
+Disney/Hair, whose model graphs have no EDF, use the official generated
+`uniform_edf` primitive for the existing generic `Material.emission` field.
+
+Generated Simple Hair retains the upstream TRRT+ `1 / 2 * pi` expression.
+The corrected normalization described for the older handwritten fiber evaluator
+below does not apply to this generated backend.
+
 Upstream: [AcademySoftwareFoundation/MaterialX v1.39.5](https://github.com/AcademySoftwareFoundation/MaterialX/tree/v1.39.5), commit `7b64921ef1d42f2d57871e9d2c43dc11f041f26b`.
 
 - `mx_noise.glsl` is an unmodified copy of `libraries/stdlib/genglsl/lib/mx_noise.glsl` (upstream Git blob `ac3de6b87aa0c27e7cf7f62ff7881613f86187b5`).
@@ -38,14 +67,14 @@ screen-space approximation. DLSS guides compress the multilobe closures.
 `mx_hair_math.slang` ports the helper functions from
 `libraries/pbrlib/genglsl/mx_chiang_hair_bsdf.glsl`: GLSL vector names, helper
 prefixes and the pi symbol are changed; mathematical formulas are retained.
-The actual fiber response in `official_models.slang` uses these helpers for all
-path-traced directions. In the TRRT+ lobe, it consistently calls the helper's
-`1 / (2 * pi)` azimuthal density, correcting the upstream final closure's
-`1 / 2 * pi` expression. It uses the reference direct response's `1 / pi`
-normalization, without applying an additional surface-normal cosine, and does
-not use the upstream raster indirect GGX/environment approximation. Its
-full-sphere mixture of normalized truncated logistic proposals is separate from
-the Chiang evaluator and its exact PDF is used in MIS.
+These helpers now support the full-sphere mixture of normalized truncated
+logistic sampling proposals in `official_models.slang`; their exact PDF is used
+in MIS. Before ShaderGen integration, the handwritten fiber evaluator also used
+them for scattering and corrected the upstream final closure's `1 / 2 * pi`
+expression to the helper's `1 / (2 * pi)` density. That evaluator has been removed.
+The new scattering response is generated from the upstream Chiang function,
+including its original TRRT+ expression, and applies no additional surface cosine
+or raster indirect/environment contribution.
 
 All upstream sources in this section are covered by the MaterialX Apache-2.0
 license reproduced in `LICENSE`.

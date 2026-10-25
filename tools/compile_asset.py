@@ -14,11 +14,16 @@ def main(argv=None):
     parser.add_argument("output",type=Path,help="Output .caustra package (embeds all texture data)")
     parser.add_argument("--material",type=Path,help="Explicit standalone .mtlx material applied to all meshes")
     parser.add_argument("--time",type=float,help="USD time-code snapshot (default: authored default values)")
+    parser.add_argument("--texture-max-size",type=int,default=0,
+                        help="Runtime texture maximum dimension, 0 keeps originals; source images are unchanged")
     parser.add_argument("--displacement-subdivisions",type=int,default=3,
                         help="Offline displacement triangle subdivision levels, 0..7 (default: 3; bounded to 1M triangles/mesh)")
     options=parser.parse_args(argv)
     try:
-        asset=import_usd(options.input,options.material,options.time,options.displacement_subdivisions)
+        print("Resolving USD geometry and MaterialX: "+str(options.input),flush=True)
+        asset=import_usd(options.input,options.material,options.time,options.displacement_subdivisions,options.texture_max_size)
+        print("Writing package: %d shared meshes, %d instances, %d materials, %d textures" %
+              (len(asset.meshes),len(asset.instances),len(asset.materials),len(asset.textures)),flush=True)
         write_asset(asset,options.output)
     except (AssetError,OSError) as error:
         print("Caustra asset compiler: "+str(error),file=sys.stderr);return 1

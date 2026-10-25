@@ -45,6 +45,17 @@ Numerical reference for triangle reconstruction and projected roundoff bounds:
   Dirk Gerrit van Antwerpen, NVIDIA, 2023:
   "Solving Self-Intersection Artifacts in DirectX Raytracing"
   https://developer.nvidia.com/blog/solving-self-intersection-artifacts-in-directx-raytracing/
-Caustra applies these bounds to homogeneous-medium collision spawn positions,
-limited to the traversed segment; sampled distances and transport PDFs are
-kept separate from this numerical placement correction.
+Caustra applies these bounds to homogeneous-medium collision positions and
+surface/NEE ray endpoints. Medium collision corrections are limited to the
+traversed segment; sampled distances and transport PDFs are kept separate
+from this numerical placement correction.
+
+The offline San Miguel conversion tool adapts the equal-area square-to-sphere
+mapping from PBRT v4 to Python, with finite backdrop geometry, adaptive angular
+patches and color quantization. PBRT source code is Copyright(c) 1998-2020
+Matt Pharr, Wenzel Jakob, and Greg Humphreys, licensed under Apache-2.0.
+See tools/caustra_assets/pbrt_environment.py and LICENSE.
+The San Miguel scene was created by Guillermo M. Leal Llaguno. Its downloaded
+model and texture data retain the upstream scene distribution terms; Caustra's
+code license does not relicense those assets. Source revision, attribution,
+hashes and conversion details are retained in generated asset reports.

@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
-// Caustra's MaterialX Standard Surface / native OpenPBR surface closures.
-// Evaluators derive from Autodesk Aurora's MaterialX GLSL-to-HLSL port;
-// see third_party/aurora/ORIGIN.md for sources, changes and license.
+// Official generated surface response, Caustra sampling proposals and physical
+// dielectric/SSS interface adapters. Transport helpers derive from Aurora's
+// MaterialX port; see third_party/aurora/ORIGIN.md for provenance.
 #ifndef CAUSTRA_SURFACE_BSDF
 #define CAUSTRA_SURFACE_BSDF
 
 #include "aurora/standard_surface_math.slang"
 #include "aurora/open_pbr_math.slang"
 #include "aurora/surface_optics_math.slang"
+#include "generated/materialx_surfaces.slang"
 
 static const float SURFACE_PI = 3.14159265358979323846f;
 static const float SURFACE_INV_PI = 0.31830988618379067154f;
@@ -26,6 +27,10 @@ struct SurfaceGuides
 };
 struct SurfaceClosure
 {
+  // Preserve authored, per-hit inputs for official graph evaluation. The
+  // remaining fields describe sampling proposals and physical interfaces;
+  // their frame rotations/clamps must not be applied twice by ShaderGen.
+  MaterialEvaluation source;
   GpuMaterial material;
   float3 normal, geometricNormal, tangent, bitangent;
   float3 coatNormal, coatTangent, coatBitangent;
@@ -163,6 +168,19 @@ bool surfaceHasTransport(SurfaceClosure c)
 {
   return c.material.program.z!=5 && (c.material.transmission.x>0.0f || c.material.subsurface.x>0.0f);
 }
+bool surfaceUsesGeneratedReflection(SurfaceClosure c)
+{
+  // ShaderGen's hardware BSDFs supply the surface response in air. Real
+  // dielectric boundaries and random-walk SSS use the transport adapter below;
+  // the hardware generator's refraction/SSS preview is not a path integrator.
+  return c.material.program.z==5 || (!surfaceHasTransport(c)
+    && (!c.interfaceConfigured || (c.etaI==1.0f && c.etaT==surfaceNominalIor(c.material))));
+}
+float3 surfaceGeneratedReflection(SurfaceClosure c,float3 view,float3 light)
+{
+  MaterialEvaluation e=c.source;
+  return mxGeneratedReflection(e.material,e.normal,e.coatNormal,e.tangent,e.coatTangent,view,light);
+}
 bool surfaceHasExtendedReflection(SurfaceClosure c)
 {
   return surfaceHasTransport(c) || c.material.thinFilm.x*c.material.thinFilm.y>0.0f
@@ -236,6 +254,7 @@ SurfaceClosure makeSurfaceClosure(MaterialEvaluation evaluation, MaterialContext
 {
   if(evaluation.material.program.z>=2) return makeOfficialClosure(evaluation,context,view);
   SurfaceClosure c = (SurfaceClosure)0;
+  c.source = evaluation;
   c.material = evaluation.material;
   c.material.baseColor.xyz = max(c.material.baseColor.xyz, float3(0.0f));
   c.material.surface.x = saturate(c.material.surface.x);
@@ -349,58 +368,12 @@ SurfaceClosure makeSurfaceClosure(MaterialEvaluation evaluation, MaterialContext
 // Current MaterialX dielectric/generalized-Schlick primitives, cosine included.
 // The distribution and compensation match the native OpenPBR nodegraph rather
 // than translating its parameters to Aurora's older Standard Surface model.
-float3 surfaceOpenPbrDielectric(float3 view, float3 light, float weight, float3 tint, float ior,
-  float2 alpha, float3 n, float3 t, float3 base)
-{
-  if(weight <= 0.0f) return base;
-  float nv = dot(n, view), nl = dot(n, light);
-  if(nv <= SURFACE_COS_EPS || nl <= SURFACE_COS_EPS) return base;
-  float3 h = normalize(view + light), b = cross(n, t);
-  float f = openPbrFresnelDielectric(saturate(dot(view, h)), ior);
-  float averageAlpha = mx_average_roughness(alpha);
-  float d = mx_ggx_NDF(t, b, h, dot(n, h), alpha.x, alpha.y);
-  float g = mx_ggx_smith_G(nl, nv, averageAlpha);
-  float comp = openPbrGgxCompensation(nv, averageAlpha, float3(f)).x;
-  float albedo = abs(ior-1.0f) < 0.000001f ? 0.0f : openPbrGgxAlbedo(nv, averageAlpha, float3(mx_ior_to_f0(ior)), float3(1)).x * comp;
-  return (d * f * g * comp * weight / (4.0f * nv)) * tint + base * max(0.0f, 1.0f - albedo * weight);
-}
 
-float3 surfaceOpenPbrValue(SurfaceClosure c, float3 view, float3 light)
-{
-  GpuMaterial m = c.material;
-  float3 value = float3(0.0f);
-  float nv = dot(c.normal, view), nl = dot(c.normal, light);
-  if(nv > SURFACE_COS_EPS && nl > SURFACE_COS_EPS)
-  {
-    float3 diffuse = openPbrDiffuse(nv, nl, clamp(dot(light, view), SURFACE_COS_EPS, 1.0f), m.factors.y, m.baseColor.xyz)
-      * (m.factors.x * nl * SURFACE_INV_PI);
-    float3 dielectric = surfaceOpenPbrDielectric(view, light, 1.0f, m.specularColor.xyz,
-      c.substrateIor, c.alpha, c.normal, c.tangent, diffuse);
-    float3 metal = float3(0.0f);
-    if(m.surface.x > 0.0f && m.specular.x > 0.0f)
-    {
-      float3 h = normalize(view + light);
-      float3 f = openPbrFresnelMetal(saturate(dot(view,h)), m.baseColor.xyz * m.factors.x, m.specularColor.xyz);
-      float averageAlpha = mx_average_roughness(c.alpha);
-      float d = mx_ggx_NDF(c.tangent, c.bitangent, h, dot(c.normal,h), c.alpha.x, c.alpha.y);
-      float g = mx_ggx_smith_G(nl,nv,averageAlpha);
-      metal = d * g * f * openPbrGgxCompensation(nv,averageAlpha,f) * m.specular.x / (4.0f*nv);
-    }
-    value = lerp(dielectric,metal,m.surface.x) * c.substrateDarkening;
-  }
-  value *= lerp(float3(1.0f),m.coatColor.xyz,m.coat.x);
-  return surfaceOpenPbrDielectric(view,light,m.coat.x,float3(1.0f),m.coat.z,
-    c.coatAlpha,c.coatNormal,c.coatTangent,value);
-}
 
 float3 surfaceEmission(SurfaceClosure c, float3 view)
 {
-  if(c.material.program.z != 1) return c.emission;
-  // Native OpenPBR coat EDF: generalized Schlick from 1-F0 at normal to zero
-  // at grazing, tinting only the covered portion of the emitter.
-  float cosine = saturate(abs(dot(c.normal,view)));
-  float attenuation = (1.0f-mx_ior_to_f0(c.material.coat.z)) * (1.0f-pow(1.0f-cosine,5.0f));
-  return c.emission * lerp(float3(1.0f),c.material.coatColor.xyz*attenuation,c.material.coat.x);
+  MaterialEvaluation e = c.source;
+  return mxGeneratedEmission(e.material,e.normal,e.coatNormal,e.tangent,e.coatTangent,view,float3(0));
 }
 
 float surfaceFuzzAlbedo(SurfaceClosure c,float3 view)
@@ -525,9 +498,8 @@ float surfaceTransmissionReflectionPdf(SurfaceClosure c,float3 view,float3 light
   return surfaceGgxPdf(v,l,c.transmissionAlpha)*surfaceInterfaceProbability(c,saturate(dot(v,h)));
 }
 
-// Deterministic evaluation of the complete opaque closure, with cosine included.
-// It follows the Standard Surface layering order used by Aurora's evaluateMaterial:
-// Oren-Nayar -> sheen -> dielectric -> metal mixture -> colored clear coat.
+// Official generated surface response, or the physical transport adapter for
+// real dielectric/SSS boundaries. Both return f*cos, with a separate proposal PDF.
 float3 surfaceValue(SurfaceClosure c, float3 view, float3 light)
 {
   if(dot(view,c.geometricNormal)<=0.0f)return float3(0.0f);
@@ -547,53 +519,7 @@ float3 surfaceValue(SurfaceClosure c, float3 view, float3 light)
     return surfaceFinite(value)?max(value,float3(0.0f)):float3(0.0f);
   }
   if(dot(light,c.geometricNormal)==0.0f)return float3(0.0f);
-  if(surfaceHasExtendedReflection(c))
-  {
-    if(c.material.program.z==1 && !surfaceHasTransport(c)
-      && c.material.thinFilm.x*c.material.thinFilm.y<=0.0f
-      && c.material.thinFilm.w<=0.0f
-      && (!c.interfaceConfigured || (c.etaI==1.0f && c.etaT==surfaceNominalIor(c.material))))
-    {
-      float fuzz=surfaceFuzzAlbedo(c,view);
-      return surfaceOpenPbrValue(c,view,light)*(1.0f-fuzz)
-        +c.material.fuzzColor.xyz*fuzz*zeltnerPdf(view,light,c.normal,c.material.fuzz.y);
-    }
-    float3 value=surfaceExtendedReflection(c,view,light);
-    return surfaceFinite(value)?max(value,float3(0.0f)):float3(0.0f);
-  }
-  if(c.material.program.z == 1)
-  {
-    float3 openPbr = surfaceOpenPbrValue(c,view,light);
-    return surfaceFinite(openPbr) ? max(openPbr,float3(0.0f)) : float3(0.0f);
-  }
-  GpuMaterial m = c.material;
-  float3 value = float3(0.0f);
-  if(dot(view, c.normal) > SURFACE_COS_EPS && dot(light, c.normal) > SURFACE_COS_EPS)
-  {
-    float3 diffuse = mx_diffuse_brdf_reflection(light, view, m.factors.x, c.diffuseColor, m.factors.y, c.normal);
-    float3 sheenLayer = mx_sheen_brdf_reflection(light, view, m.sheen.x, m.sheenColor.xyz, m.sheen.y, c.normal, diffuse);
-    float3 dielectric = mx_dielectric_brdf_reflection(light, view, m.specular.x, m.specularColor.xyz,
-      m.specular.y, c.alpha, c.normal, c.tangent, 0, sheenLayer);
-    if(m.surface.x > 0.0f)
-    {
-      float3 metal = mx_conductor_brdf_reflection(light, view, 1.0f, m.baseColor.xyz * m.factors.x,
-        m.specularColor.xyz * m.specular.x, c.alpha, c.normal, c.tangent, 0);
-      value = lerp(dielectric, metal, m.surface.x);
-    }
-    else value = dielectric;
-  }
-  if(m.coat.x > 0.0f)
-  {
-    float3 attenuated = value * lerp(float3(1.0f), m.coatColor.xyz, m.coat.x);
-    if(dot(view, c.coatNormal) > SURFACE_COS_EPS && dot(light, c.coatNormal) > SURFACE_COS_EPS)
-    {
-      // MaterialX's coat_color filters the layer below; the coat reflection itself
-      // is white. This intentionally corrects Aurora's colored coat-reflection tint.
-      value = mx_dielectric_brdf_reflection(light, view, m.coat.x, float3(1.0f), m.coat.z,
-        c.coatAlpha, c.coatNormal, c.coatTangent, 0, attenuated);
-    }
-    else value = attenuated;
-  }
+  float3 value=surfaceUsesGeneratedReflection(c)?surfaceGeneratedReflection(c,view,light):surfaceExtendedReflection(c,view,light);
   return surfaceFinite(value) ? max(value, float3(0.0f)) : float3(0.0f);
 }
 

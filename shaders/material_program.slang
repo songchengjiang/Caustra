@@ -253,6 +253,7 @@ MaterialEvaluation evaluateMaterialProgram(uint materialIndex, MaterialContext c
       float magnitude = sqrt(dot(ctx.tangent, ctx.tangent));
       if(magnitude > 1.0e-20f) tangent = ctx.tangent / magnitude;
       evaluation.tangent = materialSafeNormal(tangent, evaluation.tangent);
+      if(evaluation.material.program.z==0) evaluation.coatTangent=evaluation.tangent;
       return evaluation;
     }
   }
@@ -261,6 +262,7 @@ MaterialEvaluation evaluateMaterialProgram(uint materialIndex, MaterialContext c
   // These are ray-footprint bounds, not screen-space quad derivatives. Spatial
   // position inputs currently have no footprint in MaterialContext.
   float4 widths[MATERIAL_REGISTER_COUNT] = {};
+  bool explicitCoatTangent=false;
   for(uint index = 0; index < count; ++index)
   {
     MaterialInstruction instruction = materialInstructions[evaluation.material.program.x + index];
@@ -358,11 +360,17 @@ MaterialEvaluation evaluateMaterialProgram(uint materialIndex, MaterialContext c
       case 36: value=float4(mx_rgbtohsv(a.xyz),a.w);width=da;break;
       case 37: value=float4(mx_hsvtorgb(a.xyz),a.w);width=da;break;
       case 38: value=materialHexImage(code.z,a.xy,da.xy,registers[code.w],registers[code.w+1],registers[code.w+2],registers[code.w+3]);break;
-      case 63: value = a; width = da; materialWriteOutput(evaluation, code.z, a); break;
+      case 63:
+        value = a; width = da; materialWriteOutput(evaluation, code.z, a);
+        explicitCoatTangent=explicitCoatTangent || code.z==22;
+        break;
     }
     registers[index] = value;
     widths[index] = width;
   }
+  // Standard Surface's single authored tangent drives base and coat. Retain
+  // the renderer-neutral IR's explicit independent coat-tangent extension.
+  if(evaluation.material.program.z==0 && !explicitCoatTangent) evaluation.coatTangent=evaluation.tangent;
   return evaluation;
 }
 

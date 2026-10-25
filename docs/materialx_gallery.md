@@ -58,9 +58,11 @@ Simple Hair 使用 45 根不同朝向、带弯曲的窄薄带，法线表示纤�
 
 固定清单 [`tests/assets/materialx_official_inventory.json`](../tests/assets/materialx_official_inventory.json) 独立记录 50 个原文件的 SHA-256 和全部 66 个材质入口，用于检查遗漏。`gallery_tests.py` 还验证球面封闭性、法线与切线、UV、毛发薄带、标签和灯泡几何、本地 NodeDef 的 USD 往返和内部 UV 映射冲突。资产编译器 CPU 回归 40 项、画廊 CPU 回归 13 项均通过。
 
-完整构建的 26 项 CTest 回归已通过，包括新增材质的解析白炉参照、HSV/HexImage、异质 Beer/发光/SSS、官方场景出图、512 帧官方画廊 DLSS 旋转与原综合场景 2048 帧旋转。关闭资产读取库、窗口和 DLSS 的最小配置也通过 7 项测试。全部 GPU 验证使用 NVIDIA GeForce RTX 5060 和 Vulkan 验证层。
+接入官方 Slang ShaderGen 后，完整构建的 **28 项 CTest 回归已通过**，包括 193 组 GPU 定向材质/采样/EDF 检查、7 项源码生成审计、解析白炉参照、HSV/HexImage、异质 Beer/发光/SSS、官方场景出图、512 帧官方画廊 DLSS 旋转与原综合场景 2048 帧旋转。关闭资产读取库、窗口和 DLSS 的最小配置也已构建，通过两项 CPU 测试及实际出图自检；主构建和最小构建的 GPU 模块 SHA-256 相同。全部 GPU 验证使用 NVIDIA GeForce RTX 5060 和 Vulkan 验证层。适配范围见 [官方材质后端](materialx_backend.md)。
 
-最终 512 像素纹理包另行完成 512 帧 DLSS Quality 自动旋转：960×640 输出、640×427 内部分辨率、24 次散射，Vulkan 错误为 0。该次运行约 45 FPS，帧工作中位数 21.77 ms；这是这台 RTX 5060 上的实测结果。
+README 中的官方画廊图片已用新后端重新渲染：2160×1440、256 spp、24 次散射、关闭 DLSS，GPU 自检通过。它验证完整 512 像素纹理包可以出图，未替代逐材质的独立参考外观验收。
+
+完整 512 像素纹理包另完成新版查看器 512 帧 DLSS Quality 自动旋转：960×640 输出、640×427 内部分辨率、24 次散射，Vulkan 错误为 0。帧工作中位数 23.761 ms，包含窗口绘制；全程约 41.3 FPS（包含限帧和空闲），截图保存在 `renders/shadergen_viewer.bmp`。
 
 完整 USD 重新编译后，全部 66 个材质的参数与 632 条图指令一致；图像按内容去重后，线性纹理像素逐字节一致。图像数量可因重复资源去重而改变，比较时使用内容而非纹理索引。
 

@@ -9,4 +9,7 @@ endif()
 # the larger surface/volume integrator. Each generated line holds one word.
 string(REGEX REPLACE "([0-9a-f][0-9a-f])([0-9a-f][0-9a-f])([0-9a-f][0-9a-f])([0-9a-f][0-9a-f])"
   "0x\\4\\3\\2\\1,\n" words "${spirv}")
-file(WRITE "${OUTPUT}" "#pragma once\n#include <cstdint>\ninline constexpr uint32_t pathtraceSpv[] = {\n${words}};\n")
+if(NOT DEFINED SYMBOL)
+  set(SYMBOL pathtraceSpv)
+endif()
+file(WRITE "${OUTPUT}" "#pragma once\n#include <cstdint>\ninline constexpr uint32_t ${SYMBOL}[] = {\n${words}};\n")
