@@ -51,7 +51,23 @@ add_custom_command(OUTPUT "${shader_header}"
   COMMAND ${CMAKE_COMMAND} "-DINPUT=${shader_spv}" "-DOUTPUT=${shader_header}" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
   DEPENDS "${shader_spv}" "cmake/EmbedSpirv.cmake" VERBATIM)
 
-add_library(caustra STATIC src/renderer.cpp src/scene.cpp src/image.cpp "${shader_header}")
+# Keep counters out of the production shader entirely: even disabled dynamic
+# branches can increase register pressure in this large compute integrator.
+set(profile_shader_spv "${CMAKE_CURRENT_BINARY_DIR}/generated/pathtrace_profile.spv")
+set(profile_shader_header "${CMAKE_CURRENT_BINARY_DIR}/generated/pathtrace_profile_spv.hpp")
+add_custom_command(OUTPUT "${profile_shader_spv}"
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+  COMMAND "${CAUSTRA_SLANGC}" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/pathtrace.slang"
+    -target spirv -profile spirv_1_5 -entry main -stage compute -matrix-layout-row-major
+    -I "${CMAKE_CURRENT_SOURCE_DIR}/third_party" -capability spvRayQueryKHR
+    -DCAUSTRA_PROFILE_RAYS=1 -O2 -g0 -o "${profile_shader_spv}"
+  DEPENDS ${shader_dependencies} VERBATIM COMMENT "Compiling optional ray-statistics path tracer")
+add_custom_command(OUTPUT "${profile_shader_header}"
+  COMMAND ${CMAKE_COMMAND} "-DINPUT=${profile_shader_spv}" "-DOUTPUT=${profile_shader_header}"
+    -DSYMBOL=pathtraceProfileSpv -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
+  DEPENDS "${profile_shader_spv}" "cmake/EmbedSpirv.cmake" VERBATIM)
+
+add_library(caustra STATIC src/renderer.cpp src/scene.cpp src/image.cpp "${shader_header}" "${profile_shader_header}")
 add_library(caustra::caustra ALIAS caustra)
 target_include_directories(caustra PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(caustra PRIVATE Vulkan::Vulkan)
@@ -116,7 +132,7 @@ if(CAUSTRA_BUILD_VIEWER)
   add_custom_command(OUTPUT "${present_header}"
     COMMAND ${CMAKE_COMMAND} "-DINPUT=${present_spv}" "-DOUTPUT=${present_header}" -DSYMBOL=presentSpv -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedSpirv.cmake"
     DEPENDS "${present_spv}" "cmake/EmbedSpirv.cmake" VERBATIM)
-  add_executable(caustra_viewer examples/viewer_win32.cpp examples/vulkan_presenter.cpp examples/viewer_scene.cpp examples/orbit_camera.cpp "${present_header}")
+  add_executable(caustra_viewer examples/viewer_win32.cpp examples/vulkan_presenter.cpp examples/vulkan_frame_bridge.cpp examples/viewer_scene.cpp examples/orbit_camera.cpp "${present_header}")
   target_include_directories(caustra_viewer PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
   target_link_libraries(caustra_viewer PRIVATE caustra Vulkan::Vulkan user32 gdi32)
   if(CAUSTRA_BUILD_ASSETS)
@@ -155,6 +171,13 @@ if(CAUSTRA_BUILD_TESTS)
     target_compile_options(caustra_scene_tests PRIVATE /utf-8)
   endif()
   add_test(NAME scene_contract COMMAND caustra_scene_tests)
+  add_executable(caustra_material_coverage_tests tests/material_coverage_tests.cpp)
+  target_include_directories(caustra_material_coverage_tests PRIVATE include src)
+  if(MSVC)
+    target_compile_options(caustra_material_coverage_tests PRIVATE /W4 /wd4324 /utf-8)
+  endif()
+  add_test(NAME material_coverage_cpu COMMAND caustra_material_coverage_tests)
+  set_tests_properties(material_coverage_cpu PROPERTIES LABELS "CPU;MaterialX")
   add_executable(caustra_orbit_tests tests/orbit_camera_tests.cpp examples/orbit_camera.cpp examples/viewer_scene.cpp src/scene.cpp)
   target_include_directories(caustra_orbit_tests PRIVATE include examples)
   add_test(NAME orbit_camera COMMAND caustra_orbit_tests)
@@ -295,5 +318,59 @@ if(CAUSTRA_BUILD_TESTS)
         set_tests_properties(viewer_dlss_window PROPERTIES LABELS "GPU;GUI;DLSS" TIMEOUT 180 ENVIRONMENT "VK_LAYER_VALIDATE_SYNC=1")
       endif()
     endif()
+  endif()
+endif()
+
+if(CAUSTRA_BUILD_TESTS AND CAUSTRA_GPU_TESTS)
+  add_executable(caustra_profiling_tests tests/profiling_tests.cpp)
+  target_link_libraries(caustra_profiling_tests PRIVATE caustra)
+  caustra_copy_dlss_runtime(caustra_profiling_tests)
+  add_test(NAME profiling_gpu COMMAND caustra_profiling_tests --validation)
+  set_tests_properties(profiling_gpu PROPERTIES LABELS "GPU;Profiling" TIMEOUT 300 ENVIRONMENT "VK_LAYER_VALIDATE_SYNC=1")
+  if(CAUSTRA_ENABLE_DLSS AND CAUSTRA_DLSS_GPU_TESTS)
+    add_test(NAME profiling_dlss_gpu COMMAND caustra_profiling_tests --validation --dlss)
+    set_tests_properties(profiling_dlss_gpu PROPERTIES LABELS "GPU;Profiling;DLSS" TIMEOUT 300 ENVIRONMENT "VK_LAYER_VALIDATE_SYNC=1")
+  endif()
+  add_executable(caustra_coverage_tests tests/coverage_tests.cpp)
+  target_link_libraries(caustra_coverage_tests PRIVATE caustra)
+  caustra_copy_dlss_runtime(caustra_coverage_tests)
+  add_test(NAME coverage_gpu COMMAND caustra_coverage_tests --validation)
+  set_tests_properties(coverage_gpu PROPERTIES LABELS "GPU;MaterialX" TIMEOUT 180 ENVIRONMENT "VK_LAYER_VALIDATE_SYNC=1")
+endif()
+
+if(CAUSTRA_BUILD_TESTS AND CAUSTRA_BUILD_VIEWER AND CAUSTRA_GPU_TESTS AND CAUSTRA_VIEWER_TESTS)
+  if(CAUSTRA_ASSET_PYTHON AND EXISTS "${CAUSTRA_ASSET_PYTHON}")
+    set(shutdown_python "${CAUSTRA_ASSET_PYTHON}")
+  else()
+    # The harness is standard-library only and does not require asset support.
+    find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
+    set(shutdown_python "${Python3_EXECUTABLE}")
+  endif()
+  set(viewer_shutdown_command "${shutdown_python}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/viewer_shutdown_test.py"
+    --startup-timeout 300 --exit-timeout 5 -- "$<TARGET_FILE:caustra_viewer>")
+  # Startup/cold compilation has its own budget. Once cleanup starts, the
+  # parent must observe actual process exit within 5 seconds, including DLL
+  # unloading; hiding a window or printing a completion marker cannot pass.
+  foreach(mode IN ITEMS frames close escape minimized resize)
+    add_test(NAME viewer_shutdown_${mode} COMMAND ${viewer_shutdown_command}
+      --width 880 --height 480 --dlss off --shutdown-test ${mode} --validation)
+    set_tests_properties(viewer_shutdown_${mode} PROPERTIES
+      LABELS "GPU;GUI;Shutdown" TIMEOUT 330 ENVIRONMENT "VK_LAYER_VALIDATE_SYNC=1")
+  endforeach()
+  add_test(NAME viewer_shutdown_after_interaction COMMAND ${viewer_shutdown_command}
+    --width 880 --height 480 --dlss off --smoke-test --frames 16 --shutdown-test close --validation)
+  set_tests_properties(viewer_shutdown_after_interaction PROPERTIES
+    LABELS "GPU;GUI;Shutdown" TIMEOUT 330 ENVIRONMENT "VK_LAYER_VALIDATE_SYNC=1")
+  if(CAUSTRA_ENABLE_DLSS AND CAUSTRA_DLSS_GPU_TESTS)
+    foreach(mode IN ITEMS close minimized resize)
+      add_test(NAME viewer_shutdown_dlss_${mode} COMMAND ${viewer_shutdown_command}
+        --width 880 --height 480 --dlss quality --shutdown-test ${mode} --validation)
+      set_tests_properties(viewer_shutdown_dlss_${mode} PROPERTIES
+        LABELS "GPU;GUI;Shutdown;DLSS" TIMEOUT 330 ENVIRONMENT "VK_LAYER_VALIDATE_SYNC=1")
+    endforeach()
+    add_test(NAME viewer_shutdown_dlss_after_interaction COMMAND ${viewer_shutdown_command}
+      --width 880 --height 480 --dlss quality --smoke-test --frames 16 --shutdown-test close --validation)
+    set_tests_properties(viewer_shutdown_dlss_after_interaction PROPERTIES
+      LABELS "GPU;GUI;Shutdown;DLSS" TIMEOUT 330 ENVIRONMENT "VK_LAYER_VALIDATE_SYNC=1")
   endif()
 endif()

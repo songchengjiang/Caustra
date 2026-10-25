@@ -49,6 +49,7 @@ static const float GUIDE_FAR_DISTANCE = 1.0e4f;
 // between initialization dispatches and the ordinary path dispatch.
 static const uint CAMERA_HISTORY_VALID = 1u;
 static const uint SKIP_INVALID_MEDIUM_PATH = 1u << 1;
+static const uint DISABLE_MATERIAL_COVERAGE_OPTIMIZATION = 1u << 2;
 static const uint INIT_CAMERA_MEDIUM = 1u << 31;
 static const uint INIT_MATERIAL_MEDIUM = 1u << 30;
 static const uint INIT_HETEROGENEOUS_MEDIUM = 1u << 29;
@@ -85,6 +86,92 @@ struct SurfaceHit
 
 #include "material_program.slang"
 #include "surface_bsdf.slang"
+
+// A separately compiled pipeline owns profiling. The normal shader preprocesses
+// every declaration, wrapper and call below away, retaining its register usage
+// and ray/material program. No shader clock or vendor-only atomic is required.
+#ifndef CAUSTRA_PROFILE_RAYS
+#define CAUSTRA_PROFILE_RAYS 0
+#endif
+#if CAUSTRA_PROFILE_RAYS
+// Exact order/stride matches RayProfileCounter in shader_types.hpp.
+static const uint RAY_PROFILE_PATH_SAMPLES = 0;
+static const uint RAY_PROFILE_PRIMARY_QUERIES = 1;
+static const uint RAY_PROFILE_INDIRECT_QUERIES = 2;
+static const uint RAY_PROFILE_SHADOW_QUERIES = 3;
+static const uint RAY_PROFILE_AUXILIARY_QUERIES = 4;
+static const uint RAY_PROFILE_BOUNDARY_CONTINUATION_QUERIES = 5;
+static const uint RAY_PROFILE_QUERY_HITS = 6;
+static const uint RAY_PROFILE_QUERY_MISSES = 7;
+static const uint RAY_PROFILE_CANDIDATE_VISITS = 8;
+static const uint RAY_PROFILE_COVERAGE_EVALUATIONS = 9;
+static const uint RAY_PROFILE_FULL_MATERIAL_EVALUATIONS = 10;
+static const uint RAY_PROFILE_ALPHA_REJECTED_HITS = 11;
+static const uint RAY_PROFILE_SHADOW_TRANSPARENT_HITS = 12;
+static const uint RAY_PROFILE_ACCEPTED_SURFACE_HITS = 13;
+static const uint RAY_PROFILE_SURFACE_SCATTERS = 14;
+static const uint RAY_PROFILE_MEDIUM_SCATTERS = 15;
+static const uint RAY_PROFILE_RUSSIAN_ROULETTE_TERMINATIONS = 16;
+static const uint RAY_PROFILE_MAX_SCATTERING_DEPTH = 17;
+static const uint RAY_PROFILE_COUNTER_COUNT = 18;
+static const uint RAY_PROFILE_SHARD_COUNT = 1024;
+static const uint RAY_PROFILE_BASE_WORD = 20;
+static const uint RAY_PROFILE_SHARD_WORDS = RAY_PROFILE_COUNTER_COUNT + 1;
+static uint rayProfileCounters[RAY_PROFILE_COUNTER_COUNT];
+static uint rayProfileQueryKind = RAY_PROFILE_AUXILIARY_QUERIES;
+static bool rayProfileActive = false;
+static uint rayProfileOverflow = 0;
+
+void rayProfileAdd(uint counter)
+{
+  if(!rayProfileActive) return;
+  uint previous=rayProfileCounters[counter];
+  rayProfileCounters[counter]=previous+1u;
+  if(previous==0xffffffffu) rayProfileOverflow=1u;
+}
+void rayProfileDepth(uint depth)
+{
+  if(rayProfileActive)
+    rayProfileCounters[RAY_PROFILE_MAX_SCATTERING_DEPTH]=max(rayProfileCounters[RAY_PROFILE_MAX_SCATTERING_DEPTH],depth);
+}
+MaterialEvaluation rayProfileEvaluateMaterialProgram(uint materialIndex, MaterialContext ctx)
+{
+  rayProfileAdd(RAY_PROFILE_FULL_MATERIAL_EVALUATIONS);
+  return evaluateMaterialProgram(materialIndex,ctx);
+}
+MaterialEvaluation rayProfileEvaluateMaterialProgramCompact(uint materialIndex, MaterialContext ctx)
+{
+  rayProfileAdd(RAY_PROFILE_FULL_MATERIAL_EVALUATIONS);
+  return evaluateMaterialProgramCompact(materialIndex,ctx);
+}
+float rayProfileEvaluateMaterialCoverage(uint materialIndex, MaterialContext ctx)
+{
+  rayProfileAdd(RAY_PROFILE_COVERAGE_EVALUATIONS);
+  // A large/unsupported coverage slice executes a full program internally.
+  // Count that call as well; ordinary coverage instructions are not full shading.
+  if((coveragePrograms[materialIndex].z&1u)!=0)
+    rayProfileAdd(RAY_PROFILE_FULL_MATERIAL_EVALUATIONS);
+  return evaluateMaterialCoverage(materialIndex,ctx);
+}
+#define evaluateMaterialProgram rayProfileEvaluateMaterialProgram
+#define evaluateMaterialProgramCompact rayProfileEvaluateMaterialProgramCompact
+#define evaluateMaterialCoverage rayProfileEvaluateMaterialCoverage
+#define RAY_PROFILE_ADD(counter) rayProfileAdd(counter)
+#define RAY_PROFILE_DEPTH(depth) rayProfileDepth(depth)
+#else
+#define RAY_PROFILE_ADD(counter)
+#define RAY_PROFILE_DEPTH(depth)
+#endif
+
+bool optimizedMaterialCoverage()
+{
+  return (pc.counts.w & DISABLE_MATERIAL_COVERAGE_OPTIMIZATION) == 0;
+}
+MaterialEvaluation evaluateShadingMaterial(uint materialIndex, MaterialContext ctx)
+{
+  if(optimizedMaterialCoverage()) return evaluateMaterialProgramCompact(materialIndex, ctx);
+  return evaluateMaterialProgram(materialIndex, ctx);
+}
 
 MaterialContext materialContext(SurfaceHit hit,float footprint)
 {
@@ -222,10 +309,17 @@ bool traceGeometry(RayDesc ray, out SurfaceHit hit,uint excludedInstance=0xfffff
 {
   hit = (SurfaceHit)0;
   bool continuation=excludedInstance!=0xffffffffu;
+#if CAUSTRA_PROFILE_RAYS
+  RAY_PROFILE_ADD(rayProfileQueryKind);
+  if(continuation) { RAY_PROFILE_ADD(RAY_PROFILE_BOUNDARY_CONTINUATION_QUERIES); }
+#endif
   RayQuery<RAY_FLAG_NONE> query;
   query.TraceRayInline(topLevelAS,continuation?RAY_FLAG_FORCE_NON_OPAQUE:RAY_FLAG_FORCE_OPAQUE,0xff,ray);
   while(query.Proceed())
   {
+    // Proceed exposes shader-side candidate events, not hardware BVH node or
+    // triangle test counts. FORCE_OPAQUE traversal normally exposes none.
+    RAY_PROFILE_ADD(RAY_PROFILE_CANDIDATE_VISITS);
     if(continuation && query.CandidateType()==CANDIDATE_NON_OPAQUE_TRIANGLE)
     {
       float distance=query.CandidateTriangleRayT();
@@ -233,7 +327,12 @@ bool traceGeometry(RayDesc ray, out SurfaceHit hit,uint excludedInstance=0xfffff
       query.CommitNonOpaqueTriangleHit();
     }
   }
-  if(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) return false;
+  if(query.CommittedStatus() != COMMITTED_TRIANGLE_HIT)
+  {
+    RAY_PROFILE_ADD(RAY_PROFILE_QUERY_MISSES);
+    return false;
+  }
+  RAY_PROFILE_ADD(RAY_PROFILE_QUERY_HITS);
 
   GpuInstance instance = instances[query.CommittedInstanceID()];
   hit.instanceIndex=query.CommittedInstanceID();
@@ -292,6 +391,30 @@ bool traceGeometry(RayDesc ray, out SurfaceHit hit,uint excludedInstance=0xfffff
 
 #include "medium.slang"
 
+#if CAUSTRA_PROFILE_RAYS
+void flushRayProfile(uint pixelIndex)
+{
+  uint base=RAY_PROFILE_BASE_WORD+(pixelIndex%RAY_PROFILE_SHARD_COUNT)*RAY_PROFILE_SHARD_WORDS;
+  for(uint counter=0;counter<RAY_PROFILE_COUNTER_COUNT;++counter)
+  {
+    uint value=rayProfileCounters[counter];
+    if(value==0) continue;
+    if(counter==RAY_PROFILE_MAX_SCATTERING_DEPTH)
+    {
+      InterlockedMax(renderErrors[base+counter],value);
+    }
+    else
+    {
+      uint previous;
+      InterlockedAdd(renderErrors[base+counter],value,previous);
+      if(previous>0xffffffffu-value) rayProfileOverflow=1u;
+    }
+  }
+  if(rayProfileOverflow!=0)
+    InterlockedOr(renderErrors[base+RAY_PROFILE_COUNTER_COUNT],1u);
+}
+#endif
+
 float3 rayOrigin(SurfaceHit hit, float3 normal)
 {
   // Use the triangle/instance error bound instead of a world-position-sized
@@ -321,10 +444,31 @@ bool traceSurface(inout RayDesc ray,inout float coneWidth,float coneSpread,inout
     if(ray.TMin>ray.TMax) return false;
     if(!traceGeometry(ray,hit,excludedInstance,processedDistance)) return false;
     coneWidth=initialWidth+hit.distance*coneSpread;
-    material=evaluateMaterialProgram(hit.materialIndex,materialContext(hit,coneWidth));
+    MaterialContext ctx=materialContext(hit,coneWidth);
+    if(optimizedMaterialCoverage())
+    {
+      float opacity=evaluateMaterialCoverage(hit.materialIndex,ctx);
+      if(opacity>=1.0f || (opacity>0.0f && rand(seed)<opacity))
+      {
+        material=evaluateShadingMaterial(hit.materialIndex,ctx);
+        if(material.material.surface.z==1.0f && !hit.frontFacing) material.material.emission.xyz=float3(0.0f);
+        RAY_PROFILE_ADD(RAY_PROFILE_ACCEPTED_SURFACE_HITS);
+        return true;
+      }
+      RAY_PROFILE_ADD(RAY_PROFILE_ALPHA_REJECTED_HITS);
+      ray.TMin=asfloat(max(asuint(hit.distance)+1u,0x00800000u));
+      if(ray.TMin>ray.TMax) return false;
+      continue;
+    }
+    material=evaluateMaterialProgram(hit.materialIndex,ctx);
     if(material.material.surface.z==1.0f && !hit.frontFacing) material.material.emission.xyz=float3(0.0f);
     float opacity=materialOpacity(material.material);
-    if(opacity>=1.0f || (opacity>0.0f && rand(seed)<opacity)) return true;
+    if(opacity>=1.0f || (opacity>0.0f && rand(seed)<opacity))
+    {
+      RAY_PROFILE_ADD(RAY_PROFILE_ACCEPTED_SURFACE_HITS);
+      return true;
+    }
+    RAY_PROFILE_ADD(RAY_PROFILE_ALPHA_REJECTED_HITS);
     ray.TMin=asfloat(max(asuint(hit.distance)+1u,0x00800000u));
     if(ray.TMin>ray.TMax) return false;
   }
@@ -355,7 +499,25 @@ float3 visible(float3 origin, float3 target,float coneWidth,float coneSpread,Med
     if(found)
     {
       coneWidth=initialWidth+hit.distance*coneSpread;
-      material=evaluateMaterialProgram(hit.materialIndex,materialContext(hit,coneWidth)).material;
+      // Only homogeneous materials whose initialized table proves that they
+      // have no interior may use the coverage-only shadow path. Heterogeneous
+      // media keep per-hit evaluation even when the calibration point is empty.
+      bool coverageOnly=optimizedMaterialCoverage() &&
+        materialMediumTable[hit.materialIndex*8].x==0 && (materials[hit.materialIndex].program.w&1u)==0;
+      if(coverageOnly)
+      {
+        float opacity=evaluateMaterialCoverage(hit.materialIndex,materialContext(hit,coneWidth));
+        transmittance*=mediumRayTransmittance(media,fma(ray.Direction,float3(previousDistance),ray.Origin),
+          ray.Direction,max(0.0f,hit.distance-previousDistance));
+        transmittance*=1.0f-opacity;
+        if(!any(transmittance>0.0f)) return float3(0.0f);
+        RAY_PROFILE_ADD(RAY_PROFILE_SHADOW_TRANSPARENT_HITS);
+        previousDistance=hit.distance;
+        ray.TMin=asfloat(max(asuint(hit.distance)+1u,0x00800000u));
+        if(ray.TMin>ray.TMax) return transmittance;
+        continue;
+      }
+      material=evaluateShadingMaterial(hit.materialIndex,materialContext(hit,coneWidth)).material;
       if(material.volume.z==1.0f && repeatedMediumBoundary(previousBoundary,hit))
       {
         previousBoundary.processedDistance=max(previousBoundary.processedDistance,hit.distance);
@@ -386,7 +548,13 @@ float3 visible(float3 origin, float3 target,float coneWidth,float coneSpread,Med
       previousBoundary=recordMediumBoundary(ray,hit);
       previousBoundary.planeActive=media.count!=previousCount;
     }
-    else transmittance*=1.0f-materialOpacity(material);
+    else
+    {
+      transmittance*=1.0f-materialOpacity(material);
+#if CAUSTRA_PROFILE_RAYS
+      if(any(transmittance>0.0f)) { RAY_PROFILE_ADD(RAY_PROFILE_SHADOW_TRANSPARENT_HITS); }
+#endif
+    }
     if(!any(transmittance>0.0f)) return float3(0.0f);
     previousDistance=hit.distance;
     ray.TMin=material.volume.z==1.0f || tangent?mediumResumeDistance(hit.distance):asfloat(max(asuint(hit.distance)+1u,0x00800000u));
@@ -463,7 +631,7 @@ float3 sampleDirect(SurfaceHit hit, SurfaceClosure closure, float3 view, float f
     {
       // Closure material has already received surface-only color adjustments;
       // interior calibration takes the original graph parameters exactly once.
-      GpuMaterial boundary=evaluateMaterialProgram(hit.materialIndex,materialContext(hit,footprint)).material;
+      GpuMaterial boundary=evaluateShadingMaterial(hit.materialIndex,materialContext(hit,footprint)).material;
       if(!mediumCross(media,hit,boundary,2,origin,direction)) return float3(0.0f);
     }
   }
@@ -471,7 +639,14 @@ float3 sampleDirect(SurfaceHit hit, SurfaceClosure closure, float3 view, float f
   lightHit.position=lightPosition;lightHit.geometricNormal=lightNormal;
   lightHit.positionError=trianglePositionError(a.position.xyz,b.position.xyz,c.position.xyz,lightObjectPosition,
     lightPosition,lightNormal,lightObjectToWorld,lightWorldToObject);
+#if CAUSTRA_PROFILE_RAYS
+  uint previousQueryKind=rayProfileQueryKind;
+  rayProfileQueryKind=RAY_PROFILE_SHADOW_QUERIES;
+#endif
   float3 visibility=visible(origin,rayOrigin(lightHit,lightNormal),footprint,coneSpread,media,phaseEvent?1:5);
+#if CAUSTRA_PROFILE_RAYS
+  rayProfileQueryKind=previousQueryKind;
+#endif
   if(!any(visibility>0.0f)) return float3(0.0f);
   float3 bary=float3(1.0f-u,u*(1.0f-v),u*v);
   lightHit.shadingNormal=safeNormal(light.normal0.xyz*bary.x+light.normal1.xyz*bary.y+light.normal2.xyz*bary.z,lightNormal);
@@ -482,7 +657,7 @@ float3 sampleDirect(SurfaceHit hit, SurfaceClosure closure, float3 view, float f
   float4 tangent=light.tangent0*bary.x+light.tangent1*bary.y+light.tangent2*bary.z;
   surfaceFrame(lightHit,a,b,c,light.edge1.xyz,light.edge2.xyz,tangent.xyz,tangent.w);
   float lightFootprint=footprint+sqrt(distanceSquared)*coneSpread;
-  MaterialEvaluation emitter=evaluateMaterialProgram(light.source.w,materialContext(lightHit,lightFootprint));
+  MaterialEvaluation emitter=evaluateShadingMaterial(light.source.w,materialContext(lightHit,lightFootprint));
   if(emitter.material.surface.z==1.0f && !lightFront) return float3(0.0f);
   SurfaceClosure emitterClosure=makeSurfaceClosure(emitter,materialContext(lightHit,lightFootprint),-direction);
   float3 emission=surfaceEmission(emitterClosure,-direction)*emitterClosure.opacity;
@@ -514,6 +689,10 @@ float3 pathTrace(RayDesc ray, inout uint seed, out DenoiserGuides guides)
   // interfaces and coverage-zero layers preserve the exact original ray line.
   for(;;)
   {
+#if CAUSTRA_PROFILE_RAYS
+    rayProfileQueryKind=bounce==0?RAY_PROFILE_PRIMARY_QUERIES:RAY_PROFILE_INDIRECT_QUERIES;
+#endif
+    RAY_PROFILE_DEPTH(bounce);
     SurfaceHit hit;
     MaterialEvaluation material;
     float hitConeWidth = coneWidth;
@@ -572,10 +751,16 @@ float3 pathTrace(RayDesc ray, inout uint seed, out DenoiserGuides guides)
       }
       captureSpecularHit = false;
       ++bounce;
+      RAY_PROFILE_ADD(RAY_PROFILE_MEDIUM_SCATTERS);
+      RAY_PROFILE_DEPTH(bounce);
       if(bounce >= 3)
       {
         float survival = clamp(max(throughput.x, max(throughput.y, throughput.z)), 0.05f, 0.95f);
-        if(rand(seed) >= survival) break;
+        if(rand(seed) >= survival)
+        {
+          RAY_PROFILE_ADD(RAY_PROFILE_RUSSIAN_ROULETTE_TERMINATIONS);
+          break;
+        }
         throughput /= survival;
       }
       ray.Origin = position; ray.Direction = direction; ray.TMin = 0.0f; ray.TMax = FAR_DISTANCE;
@@ -661,10 +846,16 @@ float3 pathTrace(RayDesc ray, inout uint seed, out DenoiserGuides guides)
     float maximum = max(throughput.x, max(throughput.y, throughput.z));
     if(maximum <= 0.0f) break;
     ++bounce;
+    RAY_PROFILE_ADD(RAY_PROFILE_SURFACE_SCATTERS);
+    RAY_PROFILE_DEPTH(bounce);
     if(bounce >= 3)
     {
       float survival = clamp(maximum, 0.05f, 0.95f);
-      if(rand(seed) >= survival) break;
+      if(rand(seed) >= survival)
+      {
+        RAY_PROFILE_ADD(RAY_PROFILE_RUSSIAN_ROULETTE_TERMINATIONS);
+        break;
+      }
       throughput /= survival;
     }
     previousPosition = hit.position; previousPdf = sample.pdf; previousDelta = sample.delta;
@@ -704,6 +895,13 @@ void main(uint3 thread : SV_DispatchThreadID, uint3 groupID : SV_GroupID, uint g
   }
   if(thread.x >= pc.dimensions.x || thread.y >= pc.dimensions.y) return;
   uint index = thread.y * pc.dimensions.x + thread.x;
+#if CAUSTRA_PROFILE_RAYS
+  rayProfileActive=true;
+  rayProfileQueryKind=RAY_PROFILE_AUXILIARY_QUERIES;
+  rayProfileOverflow=0;
+  for(uint counter=0;counter<RAY_PROFILE_COUNTER_COUNT;++counter) rayProfileCounters[counter]=0;
+  rayProfileCounters[RAY_PROFILE_PATH_SAMPLES]=1;
+#endif
   uint seed = xxhash32(uint3(thread.xy, pc.counts.z));
   bool dlssEnabled = pc.counts.y == 1;
   // A single frame-wide Halton offset permits DLSS temporal reconstruction.
@@ -729,4 +927,7 @@ void main(uint3 thread : SV_DispatchThreadID, uint3 groupID : SV_GroupID, uint g
     average = previous + (sample - previous) / (float(pc.dimensions.z) + 1.0f);
   }
   accumulation[index] = float4(average, 1.0f);
+#if CAUSTRA_PROFILE_RAYS
+  flushRayProfile(index);
+#endif
 }

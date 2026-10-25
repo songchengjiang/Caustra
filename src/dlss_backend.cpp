@@ -11,6 +11,7 @@
 // readback integration, project identity, and exception-safe per-device lifetime.
 
 #include "dlss_backend.hpp"
+#include "shutdown_trace.hpp"
 
 #include <nvsdk_ngx_helpers_vk.h>
 #include <nvsdk_ngx_helpers_dlssd_vk.h>
@@ -210,12 +211,21 @@ struct DlssSession::Impl {
   NVSDK_NGX_Parameter* capabilities{};
 
   ~Impl() {
+    detail::ShutdownTrace shutdown("dlss.session");
+    detail::ShutdownTrace mutexWait("dlss.session.mutex");
     std::lock_guard lock(ngxMutex);
-    if(capabilities) cleanupNgx(NVSDK_NGX_VULKAN_DestroyParameters(capabilities), "destroy session capability parameters");
+    mutexWait.finish();
+    {
+      detail::ShutdownTrace phase("dlss.session.destroyParameters");
+      if(capabilities) cleanupNgx(NVSDK_NGX_VULKAN_DestroyParameters(capabilities), "destroy session capability parameters");
+    }
     if(initialized) {
       auto found = ngxUsers.find(device);
       if(found != ngxUsers.end() && --found->second == 0) {
-        cleanupNgx(NVSDK_NGX_VULKAN_Shutdown1(device), "shut down NGX device session");
+        {
+          detail::ShutdownTrace phase("dlss.session.shutdownDevice");
+          cleanupNgx(NVSDK_NGX_VULKAN_Shutdown1(device), "shut down NGX device session");
+        }
         ngxUsers.erase(found);
       }
     }
@@ -238,13 +248,25 @@ struct DlssBackend::Impl {
   VkExtent2D input{}, output{};
 
   ~Impl() {
+    detail::ShutdownTrace shutdown("dlss.feature");
     // Renderer owns completion before teardown. Destroy the feature before its resources.
-    if(feature) cleanupNgx(NVSDK_NGX_VULKAN_ReleaseFeature(feature), "release Ray Reconstruction feature");
     {
-      std::lock_guard lock(ngxMutex);
-      if(parameters) cleanupNgx(NVSDK_NGX_VULKAN_DestroyParameters(parameters), "destroy feature parameters");
+      detail::ShutdownTrace phase("dlss.feature.releaseFeature");
+      if(feature) cleanupNgx(NVSDK_NGX_VULKAN_ReleaseFeature(feature), "release Ray Reconstruction feature");
     }
-    for(auto& image : images) image.clear();
+    {
+      detail::ShutdownTrace mutexWait("dlss.feature.mutex");
+      std::lock_guard lock(ngxMutex);
+      mutexWait.finish();
+      {
+        detail::ShutdownTrace phase("dlss.feature.destroyParameters");
+        if(parameters) cleanupNgx(NVSDK_NGX_VULKAN_DestroyParameters(parameters), "destroy feature parameters");
+      }
+    }
+    {
+      detail::ShutdownTrace phase("dlss.feature.images");
+      for(auto& image : images) image.clear();
+    }
   }
 };
 

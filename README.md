@@ -139,9 +139,13 @@ DLSS 原生分辨率对照：960×720、64 个 1 spp 时域帧、RR 预设 E。�
 
 实时查看器使用 Win32 窗口与 Vulkan swapchain，只在 Windows 构建。HDR 与 DLSS 输出保留在显存中，由 GPU 完成色调转换和上屏，普通帧不再回读 HDR 或使用 CPU/GDI 显示图像。原生控件及视口外状态文字仍使用 Win32/GDI；保存、截图和测试检查点才回读图片。`-DCAUSTRA_BUILD_VIEWER=OFF` 可关闭这个目标；Linux 保留原有离线示例。可用 `-DCAUSTRA_VIEWER_TESTS=ON` 将需要桌面会话的窗口交互测试加入 CTest。
 
+查看器使用独立的计算设备和呈现设备，HDR 经 GPU 复制到设备本地共享 Buffer，由外部信号量同步后上屏，普通帧没有 CPU 图像回读。Windows 查看器需要 GPU 支持 opaque Win32 外部内存和信号量；离线渲染器没有这些要求。点击关闭或按 Esc 后停止输入，窗口保留至资源清理完成，再销毁窗口并退出进程。退出回归由父进程确认清理开始后 5 秒内真正返回 0，详见 [viewer_shutdown.md](docs/viewer_shutdown.md)。
+
 ## 性能测量
 
-`caustra_benchmark` 保留显式 HDR 回读和 CPU 显示转换，用于测量离线/导出路径；每帧 1 spp，分别记录渲染/降噪、HDR 回读和色调转换的中位耗时，另报整帧 P95。查看器现在直接 GPU 呈现，使用 `--frames` 输出 render/present/total 耗时，其中 present 包含 GPU 显示转换、swapchain 获取与提交；窗口状态文字绘制计入 total。它们都是同步 API 的 CPU 墙钟时间，不是纯 GPU timestamp；FPS 还受限帧与呈现模式影响。
+新增可选 GPU 时间戳与射线查询统计：`--gpu-timing` 使用正常 Shader 采集 GPU 分段，`--ray-stats` 使用独立统计 Shader，`--profile-output PREFIX` 输出逐帧 CSV 和汇总 JSON。统计默认关闭，其运行开销应与计时基线分开比较；指标口径和复现命令见 [性能采集说明](docs/performance_profiling.md)，首批数据见 [San Miguel GPU 性能报告](docs/sanmiguel_profile.md)。
+
+`caustra_benchmark` 保留显式 HDR 回读和 CPU 显示转换，用于测量离线/导出路径；每帧 1 spp，分别记录渲染/降噪、HDR 回读和色调转换的中位耗时，另报整帧 P95。查看器现在直接 GPU 呈现，使用 `--frames` 输出 render/present/total 耗时，其中 present 包含 GPU 显示转换、swapchain 获取与提交；窗口状态文字绘制计入 total。基准原有 stdout CSV 和查看器输出仍是同步 API 的 CPU 墙钟时间；新增 GPU timestamp 单独写入性能报告。FPS 还受限帧与呈现模式影响。
 
 ```powershell
 ./build/bin/Release/caustra_benchmark.exe --asset renders/features.caustra --width 960 --height 640 --bounces 24 --frames 12 --warmup 3 --dlss all
@@ -151,11 +155,17 @@ DLSS 原生分辨率对照：960×720、64 个 1 spp 时域帧、RR 预设 E。�
 ./build/bin/Release/caustra_viewer.exe --asset renders/features.caustra --width 960 --height 640 --bounces 24 --dlss quality --auto-orbit --fps-limit 240 --frames 60
 ```
 
-`--dlss all` 依次测 Off、Quality、Performance，需要可用的 DLSS；关闭 DLSS 的构建用 `--dlss off`。`--static` 测静态累积。`-DCAUSTRA_BUILD_BENCHMARK=OFF` 可关闭基准目标。当前优化包括默认切线图快速路径、GPU 本地资源、缓存回读、共享相机包含关系与预计算介质表；材质能力和路径深度保持原样。
+`--dlss all` 依次测 Off、Quality、Performance，需要可用的 DLSS；关闭 DLSS 的构建用 `--dlss off`。`--static` 测静态累积。`-DCAUSTRA_BUILD_BENCHMARK=OFF` 可关闭基准目标。当前优化包括覆盖率子图求值、短材质图临时存储特化、默认切线图快速路径、GPU 本地资源、缓存回读、共享相机包含关系与预计算介质表；材质能力和路径深度保持原样。
+
+覆盖率优化在场景上传时从原始 IR 派生私有 SSA 子图，包含透明度以及 glTF/USD 模式和阈值的依赖。主路径拒绝透明交点时只计算该子图，普通阴影也只计算覆盖率；真实介质及异构介质仍走完整材质与传输路径。覆盖率按子图规模使用 8/16/32 个临时寄存器，复杂子图保留完整求值；完整着色图不超过 32 条时使用 32 寄存器容量，通过较小容量减少每次求值的临时存储。算术、随机数消耗、透明阈值和纹理过滤规则保持一致，原材质图及资产格式不变。可将 `RendererOptions::optimizeMaterialCoverage` 设为 `false` 使用完整求值参考路径；缓冲布局和实现边界见 [架构说明](docs/architecture.md)。
 
 基准可用 `--depths 1,6,24` 和 `--variants` 运行诊断矩阵。`original` 使用原资产；`no-graphs` 清除参数图指令，保留原模型标记和 POD 参数；`opaque` 使用简单不透明漫反射，保留 POD 发光；`no-opacity` 保留材质图、纹理、颜色、法线和内部传输，仅强制覆盖率为 1，原透明度输出改为保持值及 footprint 的恒等指令。`--variants all` 仍只包含前三种，`no-opacity` 须显式列出。所有变体保留相同顶点、三角形和实例，均为有意的诊断近似，不作为正式材质回退；覆盖率或材质改变也会改变遮挡、射线数量和路径分布，因此差值不能直接当作某个函数的独立耗时。`--skip-invalid-media` 显式启用查看器的边界容错，默认仍严格检查。`--render-only` 将每帧 HDR 回读和 CPU 色调转换移出计时，仅在最后回读并检查图像；CSV 的 `render_ms` 仍是同步 API 墙钟时间。各配置额外执行一个不计入预热/统计的初始化帧，再重启相同相机轨迹；CSV 还记录几何数量和包含初始化、预热在内的介质诊断增量。
 
-San Miguel 的同几何实测显示，透明覆盖与材质图求值是当前主要瓶颈：原材质约 265ms/帧，仅禁用透明覆盖约 68ms/帧。变体会改变射线分布，这些差值不是单个函数的独立计时；方法、完整矩阵及优化优先级见 [San Miguel 性能诊断](docs/sanmiguel_performance.md)。
+`--output PREFIX` 在各配置计时结束后保存末帧输出，文件名含变体、DLSS 模式和深度，例如 `PREFIX_original_quality_b24.pfm`、`.ppm` 及 `_raw.pfm`。前两者保存当前输出，`_raw.pfm` 保存原始追踪分辨率的线性 HDR；DLSS 关闭时二者来自同一幅图。这些回读和写图均在统计之外，可用于优化前后的原始 HDR 与降噪结果对照。
+
+San Miguel 在覆盖率优化前的同几何诊断中，原材质约 265ms/帧，仅禁用透明覆盖约 68ms/帧。变体会改变射线分布，这些历史诊断差值不是单个函数的独立计时，也不是保持原画质的优化收益；方法、完整矩阵及优化优先级见 [San Miguel 性能诊断](docs/sanmiguel_performance.md)。
+
+已实施的覆盖率/阴影优化保留完整原资产：相同轨迹、960×640、DLSS Quality、24 次反弹从 **268.3ms 降至 69.2ms/帧（3.88×）**；三组原始 HDR 和 DLSS 末帧均逐像素一致。测量、回归范围与首次驱动编译成本见 [覆盖率优化记录](docs/material_coverage_optimization.md)。
 
 GPU 直接上屏对照：RTX 5060、Windows Release、`renders/features.caustra`、固定相机、960×640、24 次弹射、DLSS Quality、每帧 1 spp、160 帧、限帧 240，启用 Vulkan 验证。统计剔除前 5 帧；两次运行均包含实际窗口呈现：
 

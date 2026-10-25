@@ -44,10 +44,33 @@ inline void buildLightCdf(std::vector<GpuLight>& lights,const std::vector<double
   if(!lights.empty()) lights.back().edge1.w=float(kLightSelectionTickets);
 }
 struct GpuTextureInfo { Uint4 size; }; // width, height, base texel, mip count
+// Bindings 15/16 use Uint4(first instruction,count,flags,reserved) per material
+// and the same 32-byte MaterialInstruction as the public IR. These derived
+// coverage programs do not change Material or the portable asset layout.
 inline constexpr uint32_t kMediumStackCapacity = 16;
 inline constexpr uint32_t kCameraHistoryValid = 1u;
 inline constexpr uint32_t kSkipInvalidMediumPath = 1u << 1;
+inline constexpr uint32_t kDisableMaterialCoverageOptimization = 1u << 2;
 inline constexpr size_t kRenderDiagnosticWords = 20;
+// Only the optional CAUSTRA_PROFILE_RAYS pipeline accesses the words after the
+// ordinary transport diagnostics. One shard per pixel modulo 1024 limits
+// atomic contention without requiring shaderInt64/64-bit atomics. Each shard's
+// final word records any local or atomic uint overflow; affected counts are not
+// valid measurements. MaxScatteringDepth reduces by max; all other counters sum.
+enum class RayProfileCounter : uint32_t {
+  PathSamples = 0, PrimaryRayQueries, IndirectRayQueries, ShadowRayQueries,
+  AuxiliaryRayQueries, BoundaryContinuationQueries, QueryHits, QueryMisses,
+  CandidateVisits, CoverageEvaluations, FullMaterialEvaluations,
+  AlphaRejectedHits, ShadowTransparentHits, AcceptedSurfaceHits,
+  SurfaceScatters, MediumScatters, RussianRouletteTerminations,
+  MaxScatteringDepth, Count
+};
+inline constexpr size_t kRayProfileBaseWord = kRenderDiagnosticWords;
+inline constexpr size_t kRayProfileCounterCount = static_cast<size_t>(RayProfileCounter::Count);
+inline constexpr size_t kRayProfileShardCount = 1024;
+inline constexpr size_t kRayProfileShardWords = kRayProfileCounterCount + 1;
+inline constexpr size_t kRayProfileOverflowOffset = kRayProfileCounterCount;
+inline constexpr size_t kRayProfileDiagnosticWords = kRayProfileBaseWord + kRayProfileShardCount*kRayProfileShardWords;
 inline constexpr uint32_t kInitCameraMedium = 1u << 31;
 inline constexpr uint32_t kInitMaterialMedium = 1u << 30;
 inline constexpr uint32_t kInitHeterogeneousMedium = 1u << 29;
@@ -71,7 +94,7 @@ struct PushConstants {
   Float4 origin, lowerLeft, horizontal, vertical;
   Float4 environment; // RGB constant radiance; w enables medium boundary handling
   Uint4 dimensions; // width, height, first sample, max bounces
-  Uint4 counts; // light count, DLSS enabled, random frame sequence, flags (history 0, skip invalid medium 1, init 29..31)
+  Uint4 counts; // light count, DLSS enabled, random frame sequence, flags (history 0, medium recovery 1, coverage reference 2, init 29..31)
   Float4 params; // total light selection tickets, guide/depth floor, jitter X, jitter Y (input pixels)
 };
 using Matrix4 = std::array<float, 16>;
@@ -117,6 +140,7 @@ inline CameraTransforms makeCameraTransforms(const Camera& camera, uint32_t widt
 static_assert(sizeof(Vertex) == 64 && sizeof(Material) == 384);
 static_assert(offsetof(Material,transmission)==160 && offsetof(Material,program)==368);
 static_assert(sizeof(MaterialInstruction) == 32 && sizeof(GpuTextureInfo) == 16);
+static_assert(sizeof(Uint4) == 16);
 static_assert(sizeof(GpuMaterialMediumData) == 128 && offsetof(GpuMaterialMediumData,ior) == 112);
 static_assert(sizeof(GpuCameraMediumCache) == 80 && offsetof(GpuCameraMediumCache,instances) == 16);
 static_assert(sizeof(GpuInstance) == 144 && sizeof(GpuLight) == 160);

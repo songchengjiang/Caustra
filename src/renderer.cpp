@@ -3,7 +3,10 @@
 #include <caustra/renderer.hpp>
 #include <caustra/vulkan.hpp>
 #include "shader_types.hpp"
+#include "material_coverage.hpp"
+#include "shutdown_trace.hpp"
 #include "pathtrace_spv.hpp"
+#include "pathtrace_profile_spv.hpp"
 #include <vulkan/vulkan.h>
 #if CAUSTRA_HAS_DLSS
 #include "dlss_backend.hpp"
@@ -131,6 +134,7 @@ struct Acceleration {
 struct SceneResources {
   Buffer vertices, indices, instances, materials, lights;
   Buffer materialInstructions, textureInfos, texturePixels, materialMediumTable;
+  Buffer coveragePrograms, coverageInstructions;
   std::vector<Acceleration> blas;
   Acceleration tlas;
   uint32_t lightCount=0, materialInitX=0, materialInitY=0;
@@ -146,6 +150,8 @@ struct Renderer::Impl {
   VkPhysicalDeviceMemoryProperties memoryProperties{};
   VkDevice device{}; VkQueue queue{}; uint32_t queueFamily=0;
   VkCommandPool commandPool{}; VkCommandBuffer commandBuffer{}; VkFence fence{};
+  VkQueryPool timestampPool{};
+  uint32_t timestampValidBits=0;
   VkDescriptorSetLayout descriptorLayout{}; VkDescriptorPool descriptorPool{}; VkDescriptorSet descriptorSet{};
   VkPipelineLayout pipelineLayout{}; VkPipeline pipeline{};
   PFN_vkCreateAccelerationStructureKHR createAS{};
@@ -159,6 +165,7 @@ struct Renderer::Impl {
   RenderSettings settings; Camera camera, previousCamera; uint32_t samples=0;
   RendererOptions rendererOptions;
   RendererDiagnostics diagnostics;
+  RendererProfile lastProfile;
   uint64_t frames=0;
   std::chrono::steady_clock::time_point previousFrameStart{};
   DlssSettings dlss;
@@ -175,27 +182,54 @@ struct Renderer::Impl {
   bool rawReadbackCurrent=false, denoisedReadbackCurrent=false, cameraMediumDirty=true;
 
   ~Impl() {
-    if(device) vkDeviceWaitIdle(device);
-#if CAUSTRA_HAS_DLSS
-    denoiser.reset();
-    dlssSession.reset();
-#endif
-    scene.reset(); output.clear(); guides.clear(); denoisedOutput.clear(); rawReadback.clear(); denoisedReadback.clear();
-    cameraHistory.clear(); renderErrors.clear(); cameraMediumCache.clear();
-    if(pipeline) vkDestroyPipeline(device,pipeline,nullptr);
-    if(pipelineLayout) vkDestroyPipelineLayout(device,pipelineLayout,nullptr);
-    if(descriptorPool) vkDestroyDescriptorPool(device,descriptorPool,nullptr);
-    if(descriptorLayout) vkDestroyDescriptorSetLayout(device,descriptorLayout,nullptr);
-    if(fence) vkDestroyFence(device,fence,nullptr);
-    if(commandPool) vkDestroyCommandPool(device,commandPool,nullptr);
-    if(device) vkDestroyDevice(device,nullptr);
-    if(instance && vulkanOptions.instanceDestroying) vulkanOptions.instanceDestroying(instance);
-    if(messenger) {
-      auto fn=reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(instance,"vkDestroyDebugUtilsMessengerEXT"));
-      if(fn) fn(instance,messenger,nullptr);
+    detail::ShutdownTrace shutdown("renderer");
+    {
+      detail::ShutdownTrace phase("renderer.waitIdle");
+      if(device) vkDeviceWaitIdle(device);
     }
-    if(instance) {
-      vkDestroyInstance(instance,nullptr);
+#if CAUSTRA_HAS_DLSS
+    {
+      detail::ShutdownTrace phase("renderer.denoiser");
+      denoiser.reset();
+    }
+    {
+      detail::ShutdownTrace phase("renderer.dlssSession");
+      dlssSession.reset();
+    }
+#endif
+    {
+      detail::ShutdownTrace phase("renderer.sceneAndBuffers");
+      scene.reset(); output.clear(); guides.clear(); denoisedOutput.clear(); rawReadback.clear(); denoisedReadback.clear();
+      cameraHistory.clear(); renderErrors.clear(); cameraMediumCache.clear();
+    }
+    {
+      detail::ShutdownTrace phase("renderer.pipelineAndCommands");
+      if(pipeline) vkDestroyPipeline(device,pipeline,nullptr);
+      if(pipelineLayout) vkDestroyPipelineLayout(device,pipelineLayout,nullptr);
+      if(descriptorPool) vkDestroyDescriptorPool(device,descriptorPool,nullptr);
+      if(descriptorLayout) vkDestroyDescriptorSetLayout(device,descriptorLayout,nullptr);
+      if(fence) vkDestroyFence(device,fence,nullptr);
+      if(timestampPool) vkDestroyQueryPool(device,timestampPool,nullptr);
+      if(commandPool) vkDestroyCommandPool(device,commandPool,nullptr);
+    }
+    {
+      detail::ShutdownTrace phase("renderer.destroyDevice");
+      if(device) vkDestroyDevice(device,nullptr);
+    }
+    {
+      detail::ShutdownTrace phase("renderer.instanceDestroyingCallback");
+      if(instance && vulkanOptions.instanceDestroying) vulkanOptions.instanceDestroying(instance);
+    }
+    {
+      detail::ShutdownTrace phase("renderer.destroyDebugMessenger");
+      if(messenger) {
+        auto fn=reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(vkGetInstanceProcAddr(instance,"vkDestroyDebugUtilsMessengerEXT"));
+        if(fn) fn(instance,messenger,nullptr);
+      }
+    }
+    {
+      detail::ShutdownTrace phase("renderer.destroyInstance");
+      if(instance) vkDestroyInstance(instance,nullptr);
     }
   }
   static VKAPI_ATTR VkBool32 VKAPI_CALL debug(VkDebugUtilsMessageSeverityFlagBitsEXT severity,VkDebugUtilsMessageTypeFlagsEXT,const VkDebugUtilsMessengerCallbackDataEXT* data,void* user) {
@@ -268,15 +302,16 @@ struct Renderer::Impl {
       VkPhysicalDeviceAccelerationStructureFeaturesKHR as{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR}; as.pNext=&rq;
       VkPhysicalDeviceVulkan12Features f12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES}; f12.pNext=&as;
       VkPhysicalDeviceFeatures2 f{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2}; f.pNext=&f12; vkGetPhysicalDeviceFeatures2(candidate,&f);
-      if(!supported || !rq.rayQuery || !as.accelerationStructure || !f12.bufferDeviceAddress) continue;
+      if(!supported || !rq.rayQuery || !as.accelerationStructure || !f12.bufferDeviceAddress ||
+         props.limits.maxPerStageDescriptorStorageBuffers<15 || props.limits.maxDescriptorSetStorageBuffers<15) continue;
       vkGetPhysicalDeviceQueueFamilyProperties(candidate,&n,nullptr); std::vector<VkQueueFamilyProperties> families(n); vkGetPhysicalDeviceQueueFamilyProperties(candidate,&n,families.data());
       for(uint32_t i=0;i<n;++i) if(families[i].queueFlags&VK_QUEUE_COMPUTE_BIT) {
         if(vulkanOptions.supportsQueue && !vulkanOptions.supportsQueue(candidate,i)) continue;
         int score=(props.deviceType==VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU?10:1)+(props.vendorID==0x10de?4:0)+(families[i].queueFlags&VK_QUEUE_GRAPHICS_BIT?1:0);
-        if(score>best) { best=score; physical=candidate; properties=props; queueFamily=i; }
+        if(score>best) { best=score; physical=candidate; properties=props; queueFamily=i; timestampValidBits=families[i].timestampValidBits; }
       }
     }
-    if(!physical) throw std::runtime_error("No Vulkan 1.2 GPU with rayQuery, accelerationStructure and bufferDeviceAddress support was found.");
+    if(!physical) throw std::runtime_error("No Vulkan 1.2 GPU with rayQuery, accelerationStructure, bufferDeviceAddress and 15 storage-buffer bindings was found.");
     vkGetPhysicalDeviceMemoryProperties(physical,&memoryProperties);
     VkPhysicalDeviceAccelerationStructurePropertiesKHR asProps{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR};
     VkPhysicalDeviceProperties2 props2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2}; props2.pNext=&asProps; vkGetPhysicalDeviceProperties2(physical,&props2);
@@ -330,9 +365,15 @@ struct Renderer::Impl {
     cai.commandPool=commandPool; cai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY; cai.commandBufferCount=1;
     check(vkAllocateCommandBuffers(device,&cai,&commandBuffer),"Allocate command buffer");
     VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO}; check(vkCreateFence(device,&fci,nullptr,&fence),"Create fence");
+    invalidateProfile();
+    if(rendererOptions.enableGpuTiming && lastProfile.gpuTimingSupported) {
+      VkQueryPoolCreateInfo qpi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+      qpi.queryType=VK_QUERY_TYPE_TIMESTAMP; qpi.queryCount=4;
+      check(vkCreateQueryPool(device,&qpi,nullptr,&timestampPool),"Create timestamp query pool");
+    }
     createPipeline();
     cameraHistory=buffer(sizeof(GpuCameraHistory),VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
-    renderErrors=buffer(kRenderDiagnosticWords*sizeof(uint32_t),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    renderErrors=buffer(renderDiagnosticWords()*sizeof(uint32_t),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     cameraMediumCache=buffer(sizeof(GpuCameraMediumCache),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,BufferMemory::Device);
     resizeOutput(settings,dlss);
   }
@@ -432,11 +473,11 @@ struct Renderer::Impl {
     return result;
   }
   void createPipeline() {
-    std::array<VkDescriptorSetLayoutBinding,15> bindings{};
+    std::array<VkDescriptorSetLayoutBinding,17> bindings{};
     for(uint32_t i=0;i<bindings.size();++i) { bindings[i].binding=i; bindings[i].descriptorCount=1; bindings[i].descriptorType=i==0?VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:(i==8?VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); bindings[i].stageFlags=VK_SHADER_STAGE_COMPUTE_BIT; }
     VkDescriptorSetLayoutCreateInfo li{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO}; li.bindingCount=static_cast<uint32_t>(bindings.size()); li.pBindings=bindings.data();
     check(vkCreateDescriptorSetLayout(device,&li,nullptr,&descriptorLayout),"Create descriptor layout");
-    VkDescriptorPoolSize sizes[]={{VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,1},{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,13},{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1}};
+    VkDescriptorPoolSize sizes[]={{VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR,1},{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,15},{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1}};
     VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO}; pi.maxSets=1; pi.poolSizeCount=3; pi.pPoolSizes=sizes;
     check(vkCreateDescriptorPool(device,&pi,nullptr,&descriptorPool),"Create descriptor pool");
     VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO}; ai.descriptorPool=descriptorPool; ai.descriptorSetCount=1; ai.pSetLayouts=&descriptorLayout;
@@ -444,7 +485,9 @@ struct Renderer::Impl {
     VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(PushConstants)};
     VkPipelineLayoutCreateInfo pci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO}; pci.setLayoutCount=1; pci.pSetLayouts=&descriptorLayout; pci.pushConstantRangeCount=1; pci.pPushConstantRanges=&range;
     check(vkCreatePipelineLayout(device,&pci,nullptr,&pipelineLayout),"Create pipeline layout");
-    VkShaderModuleCreateInfo sci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO}; sci.codeSize=sizeof(pathtraceSpv); sci.pCode=pathtraceSpv;
+    VkShaderModuleCreateInfo sci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    sci.codeSize=rendererOptions.enableRayStatistics?sizeof(pathtraceProfileSpv):sizeof(pathtraceSpv);
+    sci.pCode=rendererOptions.enableRayStatistics?pathtraceProfileSpv:pathtraceSpv;
     VkShaderModule shader{}; check(vkCreateShaderModule(device,&sci,nullptr,&shader),"Create shader module");
     VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO}; ci.layout=pipelineLayout; ci.stage={VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO}; ci.stage.stage=VK_SHADER_STAGE_COMPUTE_BIT; ci.stage.module=shader; ci.stage.pName="main";
     auto result=vkCreateComputePipelines(device,VK_NULL_HANDLE,1,&ci,nullptr,&pipeline); vkDestroyShaderModule(device,shader,nullptr); check(result,"Create path-trace pipeline");
@@ -452,8 +495,8 @@ struct Renderer::Impl {
   void descriptors() {
     if(!scene) return;
     VkWriteDescriptorSetAccelerationStructureKHR as{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR}; as.accelerationStructureCount=1; as.pAccelerationStructures=&scene->tlas.handle;
-    std::array<VkWriteDescriptorSet,15> writes{}; std::array<VkDescriptorBufferInfo,14> infos{};
-    Buffer* buffers[]={&scene->vertices,&scene->indices,&scene->instances,&scene->materials,&scene->lights,&output,&guides,&cameraHistory,&scene->materialInstructions,&scene->textureInfos,&scene->texturePixels,&renderErrors,&cameraMediumCache,&scene->materialMediumTable};
+    std::array<VkWriteDescriptorSet,17> writes{}; std::array<VkDescriptorBufferInfo,16> infos{};
+    Buffer* buffers[]={&scene->vertices,&scene->indices,&scene->instances,&scene->materials,&scene->lights,&output,&guides,&cameraHistory,&scene->materialInstructions,&scene->textureInfos,&scene->texturePixels,&renderErrors,&cameraMediumCache,&scene->materialMediumTable,&scene->coveragePrograms,&scene->coverageInstructions};
     for(uint32_t i=0;i<writes.size();++i) {
       auto& w=writes[i]; w.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w.dstSet=descriptorSet; w.dstBinding=i; w.descriptorCount=1;
       w.descriptorType=i==0?VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:(i==8?VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
@@ -525,6 +568,9 @@ struct Renderer::Impl {
     next->indices=stageBuffer(indices.size()*sizeof(uint32_t),usage,indices.data(),pending);
     next->materials=stageBuffer(input.materials.size()*sizeof(Material),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,input.materials.data(),pending);
     next->materialInstructions=stageBuffer(input.materialInstructions.size()*sizeof(MaterialInstruction),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,input.materialInstructions.data(),pending);
+    const auto coverage=buildCoveragePrograms(input);
+    next->coveragePrograms=stageBuffer(coverage.ranges.size()*sizeof(Uint4),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,coverage.ranges.data(),pending);
+    next->coverageInstructions=stageBuffer(coverage.instructions.size()*sizeof(MaterialInstruction),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,coverage.instructions.data(),pending);
     const uint32_t materialGroups=static_cast<uint32_t>((uint64_t(input.materials.size())+63)/64);
     next->materialInitX=std::min(materialGroups,properties.limits.maxComputeWorkGroupCount[0]);
     next->materialInitY=(materialGroups+next->materialInitX-1)/next->materialInitX;
@@ -643,7 +689,53 @@ struct Renderer::Impl {
     next->tlas=build(VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,geo,static_cast<uint32_t>(asInstances.size()));
     scene=std::move(next); cameraMediumDirty=true; resetHistory(); descriptors();
   }
-  void resetHistory() { samples=0; frames=0; rawReadbackCurrent=denoisedReadbackCurrent=false; }
+  size_t renderDiagnosticWords() const {
+    return rendererOptions.enableRayStatistics?kRayProfileDiagnosticWords:kRenderDiagnosticWords;
+  }
+  void invalidateProfile() {
+    lastProfile={};
+    lastProfile.gpuTimingSupported=timestampValidBits>0 && properties.limits.timestampPeriod>0;
+  }
+  double gpuIntervalMs(uint64_t begin,uint64_t end) const {
+    // Timestamp values have queue-family-specific precision and wrap modulo
+    // that bit width. A measured submission must be shorter than one wrap.
+    const uint64_t mask=timestampValidBits>=64?UINT64_MAX:(uint64_t{1}<<timestampValidBits)-1;
+    return double((end-begin)&mask)*double(properties.limits.timestampPeriod)/1000000.0;
+  }
+  void collectRayStatistics(RayStatistics& rays) const {
+    static constexpr std::pair<RayProfileCounter,uint64_t RayStatistics::*> sums[]{
+      {RayProfileCounter::PathSamples,&RayStatistics::pathSamples},
+      {RayProfileCounter::PrimaryRayQueries,&RayStatistics::primaryRayQueries},
+      {RayProfileCounter::IndirectRayQueries,&RayStatistics::indirectRayQueries},
+      {RayProfileCounter::ShadowRayQueries,&RayStatistics::shadowRayQueries},
+      {RayProfileCounter::AuxiliaryRayQueries,&RayStatistics::auxiliaryRayQueries},
+      {RayProfileCounter::BoundaryContinuationQueries,&RayStatistics::boundaryContinuationQueries},
+      {RayProfileCounter::QueryHits,&RayStatistics::queryHits},
+      {RayProfileCounter::QueryMisses,&RayStatistics::queryMisses},
+      {RayProfileCounter::CandidateVisits,&RayStatistics::candidateVisits},
+      {RayProfileCounter::CoverageEvaluations,&RayStatistics::coverageEvaluations},
+      {RayProfileCounter::FullMaterialEvaluations,&RayStatistics::fullMaterialEvaluations},
+      {RayProfileCounter::AlphaRejectedHits,&RayStatistics::alphaRejectedHits},
+      {RayProfileCounter::ShadowTransparentHits,&RayStatistics::shadowTransparentHits},
+      {RayProfileCounter::AcceptedSurfaceHits,&RayStatistics::acceptedSurfaceHits},
+      {RayProfileCounter::SurfaceScatters,&RayStatistics::surfaceScatters},
+      {RayProfileCounter::MediumScatters,&RayStatistics::mediumScatters},
+      {RayProfileCounter::RussianRouletteTerminations,&RayStatistics::russianRouletteTerminations}
+    };
+    const auto* words=static_cast<const uint32_t*>(renderErrors.mapped);
+    for(size_t shard=0;shard<kRayProfileShardCount;++shard) {
+      const auto* counters=words+kRayProfileBaseWord+shard*kRayProfileShardWords;
+      for(const auto& [counter,member]:sums) {
+        const auto value=uint64_t(counters[static_cast<size_t>(counter)]);
+        auto& total=rays.*member;
+        if(value>UINT64_MAX-total) { rays.overflowed=true; total=UINT64_MAX; }
+        else total+=value;
+      }
+      rays.maxScatteringDepth=std::max(rays.maxScatteringDepth,uint64_t(counters[static_cast<size_t>(RayProfileCounter::MaxScatteringDepth)]));
+      rays.overflowed|=counters[kRayProfileOverflowOffset]!=0;
+    }
+  }
+  void resetHistory() { samples=0; frames=0; rawReadbackCurrent=denoisedReadbackCurrent=false; invalidateProfile(); }
   void prepareReadback(const Buffer& source,Buffer& readback,bool& current) {
     if(current) return;
     if(!readback.handle || readback.size!=source.size)
@@ -689,6 +781,7 @@ void Renderer::updateCamera(const Camera& camera) {
   impl_->camera=camera;
   impl_->samples=0;
   impl_->rawReadbackCurrent=impl_->denoisedReadbackCurrent=false;
+  impl_->invalidateProfile();
 }
 void Renderer::setSettings(const RenderSettings& settings) {
   validateSettings(settings); impl_->resizeOutput(settings,impl_->dlss);
@@ -706,21 +799,30 @@ void Renderer::render(uint32_t count) {
   if(!impl_->scene) throw std::logic_error("Call setScene before render");
   if(count>UINT32_MAX-impl_->samples) throw std::overflow_error("Sample counter overflow");
   if(count>UINT64_MAX-impl_->frames) throw std::overflow_error("Frame counter overflow");
+  if(!count) return;
+  impl_->invalidateProfile();
+  RendererProfile profile=impl_->lastProfile;
+  profile.samples=count; profile.renderWidth=impl_->renderSize.width; profile.renderHeight=impl_->renderSize.height;
   for(uint32_t i=0;i<count;++i) {
     const auto frameStart=std::chrono::steady_clock::now();
     auto p=impl_->constants();
     if(impl_->rendererOptions.mediumErrorPolicy==MediumErrorPolicy::SkipInvalidPath) p.counts.w|=kSkipInvalidMediumPath;
+    if(!impl_->rendererOptions.optimizeMaterialCoverage) p.counts.w|=kDisableMaterialCoverageOptimization;
     const auto current=makeCameraTransforms(impl_->camera,impl_->settings.width,impl_->settings.height);
     const auto previous=impl_->frames?makeCameraTransforms(impl_->previousCamera,impl_->settings.width,impl_->settings.height):current;
     const GpuCameraHistory history{current.worldToClip,previous.worldToClip,{impl_->rendererOptions.mediumBoundaryTolerance,0,0,0}};
     std::memcpy(impl_->cameraHistory.mapped,&history,sizeof(history));
     impl_->cameraHistory.flush();
-    std::memset(impl_->renderErrors.mapped,0,kRenderDiagnosticWords*sizeof(uint32_t));
+    std::memset(impl_->renderErrors.mapped,0,impl_->renderDiagnosticWords()*sizeof(uint32_t));
     impl_->renderErrors.flush();
     impl_->rawReadbackCurrent=impl_->denoisedReadbackCurrent=false;
     const bool initializeMaterials=impl_->scene->materialMediumDirty;
     const bool initializeMedium=impl_->cameraMediumDirty && impl_->scene->hasMedia;
     impl_->submit([&](VkCommandBuffer cmd){
+      if(impl_->timestampPool) {
+        vkCmdResetQueryPool(cmd,impl_->timestampPool,0,4);
+        vkCmdWriteTimestamp(cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,impl_->timestampPool,0);
+      }
       Impl::barrier(cmd,VK_PIPELINE_STAGE_HOST_BIT|VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_ACCESS_HOST_WRITE_BIT|VK_ACCESS_SHADER_WRITE_BIT|VK_ACCESS_TRANSFER_READ_BIT,VK_ACCESS_UNIFORM_READ_BIT|VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT);
       vkCmdBindPipeline(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,impl_->pipeline); vkCmdBindDescriptorSets(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,impl_->pipelineLayout,0,1,&impl_->descriptorSet,0,nullptr);
       if(initializeMaterials) {
@@ -744,7 +846,12 @@ void Renderer::render(uint32_t count) {
         vkCmdDispatch(cmd,1,1,1);
         Impl::barrier(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_ACCESS_SHADER_WRITE_BIT,VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_SHADER_WRITE_BIT);
       }
+      // Completion boundaries give additive elapsed regions without a TOP/BOTTOM
+      // start for every pass (which could overlap earlier work). They are not
+      // exclusive hardware-unit timings or pure traversal/ALU measurements.
+      if(impl_->timestampPool) vkCmdWriteTimestamp(cmd,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,impl_->timestampPool,1);
       vkCmdPushConstants(cmd,impl_->pipelineLayout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(p),&p); vkCmdDispatch(cmd,(p.dimensions.x+7)/8,(p.dimensions.y+7)/8,1);
+      if(impl_->timestampPool) vkCmdWriteTimestamp(cmd,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,impl_->timestampPool,2);
 #if CAUSTRA_HAS_DLSS
       if(impl_->denoiser) {
         // Include readback, presentation and frame limiting between submissions:
@@ -754,6 +861,7 @@ void Renderer::render(uint32_t count) {
       }
 #endif
       Impl::barrier(cmd,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,VK_ACCESS_SHADER_WRITE_BIT,VK_ACCESS_HOST_READ_BIT);
+      if(impl_->timestampPool) vkCmdWriteTimestamp(cmd,VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,impl_->timestampPool,3);
     });
     impl_->renderErrors.invalidate();
     std::array<uint32_t,kRenderDiagnosticWords> diagnostic{};
@@ -782,6 +890,23 @@ void Renderer::render(uint32_t count) {
       }
       throw std::runtime_error("Invalid medium transport state (GPU diagnostic flags "+std::to_string(errors)+")");
     }
+    if(impl_->timestampPool) {
+      std::array<uint64_t,4> timestamps{};
+      check(vkGetQueryPoolResults(impl_->device,impl_->timestampPool,0,4,sizeof(timestamps),timestamps.data(),sizeof(uint64_t),
+                                 VK_QUERY_RESULT_64_BIT|VK_QUERY_RESULT_WAIT_BIT),"Read render timestamps");
+      const bool initialized=initializeMaterials || initializeMedium;
+      if(initialized) profile.initializationGpuMs+=impl_->gpuIntervalMs(timestamps[0],timestamps[1]);
+      // Absent regions have zero cost; their boundary overhead belongs to the
+      // adjacent path-trace region, keeping total equal to the region sum.
+      profile.pathTraceGpuMs+=impl_->gpuIntervalMs(timestamps[initialized?1:0],timestamps[impl_->dlss.enabled?2:3]);
+      if(impl_->dlss.enabled) profile.dlssGpuMs+=impl_->gpuIntervalMs(timestamps[2],timestamps[3]);
+      profile.totalGpuMs+=impl_->gpuIntervalMs(timestamps[0],timestamps[3]);
+      profile.gpuTimingValid=true;
+    }
+    if(impl_->rendererOptions.enableRayStatistics) {
+      impl_->collectRayStatistics(profile.rays);
+      profile.rayStatisticsValid=true;
+    }
     if(initializeMaterials) impl_->scene->materialMediumDirty=false;
     if(initializeMedium) impl_->cameraMediumDirty=false;
     ++impl_->samples;
@@ -789,6 +914,7 @@ void Renderer::render(uint32_t count) {
     impl_->previousCamera=impl_->camera;
     impl_->previousFrameStart=frameStart;
   }
+  impl_->lastProfile=profile;
 }
 Image Renderer::readback() {
   if(!impl_->dlss.enabled) return readbackRaw();
@@ -808,6 +934,7 @@ uint64_t Renderer::frameCount() const { return impl_->frames; }
 std::string Renderer::deviceName() const { return impl_->properties.deviceName; }
 uint32_t Renderer::validationErrorCount() const { return impl_->validationErrors.load(); }
 RendererDiagnostics Renderer::diagnostics() const { return impl_->diagnostics; }
+RendererProfile Renderer::profile() const { return impl_->lastProfile; }
 VulkanContext VulkanAccess::context(Renderer& renderer) {
   const auto& impl=*renderer.impl_;
   return {impl.instance,impl.physical,impl.device,impl.queue,impl.queueFamily};

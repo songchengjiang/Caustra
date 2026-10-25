@@ -123,12 +123,62 @@ struct RendererOptions {
   // preceding boundary/ray origin are zero-length contacts; zero disables it.
   // Valid boundaries, including thinner solids, retain their normal transport.
   float mediumBoundaryTolerance = 0.001f;
+  // Prune coverage-only graphs and specialize temporary storage for short
+  // programs. Disable to compare with full material evaluation for debugging.
+  bool optimizeMaterialCoverage = true;
+  // Optional command-buffer timestamp queries. Uses the normal shader, without
+  // per-ray instrumentation; unsupported queues report invalid GPU timings.
+  bool enableGpuTiming = false;
+  // Selects a separately compiled instrumented shader. Atomics/private counters
+  // perturb performance; measure production timings in a separate timing run.
+  bool enableRayStatistics = false;
 };
 struct RendererDiagnostics {
   // Event totals for the renderer lifetime, including shadow/camera probes.
   // These survive accumulation resets; they are not counts of affected pixels.
   uint64_t invalidMediumBoundaries = 0;
   uint64_t skippedNearMediumBoundaries = 0;
+};
+
+struct RayStatistics {
+  uint64_t pathSamples = 0;
+  uint64_t primaryRayQueries = 0;
+  uint64_t indirectRayQueries = 0;
+  uint64_t shadowRayQueries = 0;
+  uint64_t auxiliaryRayQueries = 0;
+  // A subset of the query categories above, not an additional ray category.
+  uint64_t boundaryContinuationQueries = 0;
+  uint64_t queryHits = 0;
+  uint64_t queryMisses = 0;
+  // Candidates returned to shader code by RayQuery::Proceed. This is not a
+  // count of hardware BVH node visits or triangle intersection tests.
+  uint64_t candidateVisits = 0;
+  uint64_t coverageEvaluations = 0;
+  uint64_t fullMaterialEvaluations = 0;
+  uint64_t alphaRejectedHits = 0;
+  uint64_t shadowTransparentHits = 0;
+  uint64_t acceptedSurfaceHits = 0;
+  uint64_t surfaceScatters = 0;
+  uint64_t mediumScatters = 0;
+  uint64_t russianRouletteTerminations = 0;
+  uint64_t maxScatteringDepth = 0;
+  bool overflowed = false; // Any overflowing GPU counter makes counts incomplete.
+};
+
+struct RendererProfile {
+  bool gpuTimingSupported = false;
+  bool gpuTimingValid = false;
+  bool rayStatisticsValid = false;
+  uint32_t samples = 0, renderWidth = 0, renderHeight = 0;
+  // GPU command-buffer elapsed intervals, summed across the last render call.
+  // Excludes CPU submission/wait, explicit HDR readback, and presentation.
+  // Path tracing includes traversal, materials and transport together; timestamps
+  // cannot distinguish pure BVH traversal from shader execution within a dispatch.
+  double initializationGpuMs = 0;
+  double pathTraceGpuMs = 0;
+  double dlssGpuMs = 0;
+  double totalGpuMs = 0;
+  RayStatistics rays;
 };
 enum class DlssQuality { Native, Quality, Balanced, Performance };
 enum class DlssPreset : uint32_t { Default = 0, D = 4, E = 5 };
@@ -175,6 +225,9 @@ public:
   std::string deviceName() const;
   uint32_t validationErrorCount() const;
   RendererDiagnostics diagnostics() const;
+  // Last successful nonempty render() call; samples are aggregated, depth is a
+  // maximum. Scene/camera/settings/history mutations invalidate the result.
+  RendererProfile profile() const;
 private:
   friend class VulkanAccess;
   struct Impl;

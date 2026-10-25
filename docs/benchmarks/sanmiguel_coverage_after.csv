@@ -1,0 +1,4 @@
+variant,meshes,instances,shared_triangles,instanced_triangles,mode,width,height,bounces,frames,render_only,render_ms,readback_ms,tonemap_ms,total_ms,p95_ms,equivalent_fps,checksum,invalid_boundaries,near_skips
+original,846,160332,2513470,10504888,quality,960,640,1,20,1,23.660,0.000,0.000,23.660,25.824,42.265,1072871016162,0,11
+original,846,160332,2513470,10504888,quality,960,640,6,20,1,69.528,0.000,0.000,69.528,74.817,14.383,1880103245042,0,24
+original,846,160332,2513470,10504888,quality,960,640,24,20,1,69.234,0.000,0.000,69.234,73.692,14.444,1886994537807,0,27

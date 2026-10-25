@@ -1,0 +1,32 @@
+[
+  {
+    "summary": "docs\\benchmarks\\sanmiguel_profile_baseline_summary.json",
+    "configurations": 9,
+    "measured_frames": 180,
+    "valid_timing_frames": 0,
+    "valid_counter_frames": 0,
+    "query_accounting": "not_requested",
+    "timestamp_segments": "not_requested_or_unavailable",
+    "summary_distributions": "passed"
+  },
+  {
+    "summary": "docs\\benchmarks\\sanmiguel_profile_counters_summary.json",
+    "configurations": 9,
+    "measured_frames": 180,
+    "valid_timing_frames": 180,
+    "valid_counter_frames": 180,
+    "query_accounting": "passed",
+    "timestamp_segments": "passed",
+    "summary_distributions": "passed"
+  },
+  {
+    "summary": "docs\\benchmarks\\sanmiguel_profile_timing_summary.json",
+    "configurations": 9,
+    "measured_frames": 180,
+    "valid_timing_frames": 180,
+    "valid_counter_frames": 0,
+    "query_accounting": "not_requested",
+    "timestamp_segments": "passed",
+    "summary_distributions": "passed"
+  }
+]

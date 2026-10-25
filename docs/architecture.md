@@ -2,9 +2,11 @@
 
 `caustra` 静态库拥有 Vulkan 实例、硬件选择、设备、队列、内存、BLAS/TLAS、描述符、compute pipeline 和累积缓冲；可选 `src/dlss_backend.*` 封装 NVIDIA NGX Ray Reconstruction。示例只负责生成场景、设置相机、调度样本与写出图像。核心没有文件格式或应用 UI 的概念。
 
-`caustra_viewer` 是独立 Win32 示例，程序化场景和环绕相机位于 `examples/viewer_scene.*`、`examples/orbit_camera.*`。窗口消息只在应用线程处理；渲染循环在同一线程调用同步 API。`examples/vulkan_presenter.*` 拥有子视口的 surface、swapchain 与显示资源，从核心借用显存中的 RGBA32F 输出，由独立 compute shader 执行 Reinhard/sRGB，再 blit 到 swapchain 并呈现。普通帧没有 HDR 回读、CPU 色调转换或 GDI 图像绘制；原生控件和视口外的状态信息仍使用 Win32/GDI。只有主动保存、截图和测试检查点回读图像。最小化后停止渲染，尺寸变化合并后重建输出。
+`caustra_viewer` 是独立 Win32 示例，程序化场景和环绕相机位于 `examples/viewer_scene.*`、`examples/orbit_camera.*`。窗口消息只在应用线程处理；渲染循环在同一线程调用同步 API。`examples/vulkan_presenter.*` 拥有子视口的 surface、独立逻辑设备、swapchain 与显示资源。`examples/vulkan_frame_bridge.*` 在核心设备上将借用的 RGBA32F 输出复制到设备本地共享 Buffer，呈现设备通过 opaque Win32 外部内存导入同一存储；双向外部二进制信号量及 EXTERNAL 所有权屏障同步复用。呈现 compute shader 执行 Reinhard/sRGB、缩放和目标通道排列，再按字节复制到 swapchain。普通帧没有 HDR 回读、CPU 色调转换或 GDI 图像绘制；原生控件和视口外的状态信息仍使用 Win32/GDI。只有主动保存、截图和测试检查点回读图像。最小化后停止渲染，尺寸变化合并后重建输出。
 
 可选的 `include/caustra/vulkan.hpp` 提供实例/设备扩展要求、实例资源生命周期回调及队列筛选。`VulkanAccess` 返回借用的设备、队列和当前输出 buffer，窗口系统与呈现实现仍全部在示例层。使用方必须单线程访问同一队列，插入输出写入到读取的屏障，并在任何核心状态修改前完成借用 buffer 的 GPU 使用；不能销毁借用资源。默认构造不请求任何 surface/swapchain 扩展，离线核心不增加 Win32 或呈现依赖。
+
+查看器接受关闭请求后停止渲染，释放鼠标捕获，禁用输入并显示 Closing，窗口保留至清理真正完成。Presenter 及其 Renderer 的独占所有权随后交给清理线程；主线程只分发原生窗口消息，不再调用渲染 API。清理等待 GPU 与呈现完成，依次释放显示资源、双设备共享桥、呈现设备、Renderer/DLSS/计算设备及 surface，join 后才销毁 HWND。这里是停止使用后的顺序移交，核心仍保持同步、单线程所有权。计算设备不启用 swapchain，也不提交呈现请求；外部共享扩展仅由查看器通过现有 Vulkan interop 选项请求。默认离线路径不增加窗口或外部内存要求。诊断和实际进程退出回归见 [查看器退出](viewer_shutdown.md)。
 
 查看器输出尺寸与视口物理像素一致，不再用固定像素预算缩小大窗口。`WM_SIZE` 合并后调用 `setSettings`，按实际尺寸重建累积、guides、DLSS 输出和回读资源，并清除历史。DLSS 只影响追踪输入尺寸；界面及日志分别显示输入和输出。调整窗口过程中由 GPU 拉伸旧帧，尺寸稳定并完成下一帧后按原生输出呈现。暂停时只重呈现保留的 HDR，不改变采样或时域历史；尺寸、DLSS 与相机切换延迟到恢复后的下一次渲染前应用。等尺寸显示使用整数像素索引直接读取 HDR，仅拉伸旧帧时使用双线性过滤，避免浮点坐标误差混入相邻高亮样本。
 
@@ -12,7 +14,9 @@
 
 发光网格的所有实例三角形会展开成世界空间面积光表。常量发光或材质程序包含发光输出都会加入候选光表；面积光采样点重新执行同一材质图，使用相同位置、UV、法线、切线和滤波足迹，支持纹理/程序发光。提议权重为世界面积乘基础发光 Rec.709 亮度；图驱动发光没有正的基础值时使用正权重。CDF 分配精确的 24 位整数 ticket，每个三角形至少一个，避免微弱光在累计浮点数中消失。选中后均匀采样三角形表面，直接光和 BSDF 命中均从实际相邻 CDF 差求 PDF，使用 balance MIS。环境设置仍为恒定 RGB 辐射，仅由 BSDF 路径采样；San Miguel 的 HDR 天空在外围工具中转为发光网格，见 [转换说明](sanmiguel.md)。表面双面着色；发光可显式选择单面（USD 区域灯）或双面。有限路径深度后仍执行一次只收集发光/环境的终点射线，使直接光与 BSDF 两种采样配对。
 
-`src/shader_types.hpp` 与 `shaders/pathtrace.slang`、`shaders/material_program.slang` 的数据布局逐项对应；GPU 数据以四分量 float/uint 对齐。Vertex 为 64 字节、Material 为 384 字节（23 个 float4 与 program uint4）、材质指令为 32 字节，主机静态断言布局。Binding 0 为 TLAS，1–7 为几何/材质/光表/输出与 DLSS guides，8 为 144 字节的相机与传输参数 uniform，9–11 为材质指令、纹理元数据与线性 mip texel atlas，12 为 GPU 传输诊断标记，13 为相机介质缓存，14 为预计算介质表。相机 uniform 的两个矩阵之后附加 float4，x 保存介质边界容差（米）；push constants 保持 128 字节。修改材质或描述符时必须同时更新主机和着色器。构建重新编译并嵌入 SPIR-V；完整 NVIDIA BSDF 辅助源码仍保留，但主积分器现在通过独立表面闭包进行求值和采样。资产包写入版本为 2，C++/Python 读取器同时接受版本 1 并补齐新参数默认值。
+`src/shader_types.hpp` 与 `shaders/pathtrace.slang`、`shaders/material_program.slang` 的数据布局逐项对应；GPU 数据以四分量 float/uint 对齐。Vertex 为 64 字节、Material 为 384 字节（23 个 float4 与 program uint4）、材质指令为 32 字节，主机静态断言布局。Binding 0 为 TLAS，1–7 为几何/材质/光表/输出与 DLSS guides，8 为 144 字节的相机与传输参数 uniform，9–11 为材质指令、纹理元数据与线性 mip texel atlas，12 为 GPU 传输诊断标记，13 为相机介质缓存，14 为预计算介质表，15 为每材质的私有覆盖率程序 `uint4(first,count,flags,reserved)`，16 为其派生 IR 指令。设备需支持至少 15 个 storage-buffer 绑定。相机 uniform 的两个矩阵之后附加 float4，x 保存介质边界容差（米）；push constants 保持 128 字节，`counts.w` 的 bit 2 选择完整材质参考路径。修改材质或描述符时必须同时更新主机和着色器。构建重新编译并嵌入 SPIR-V；完整 NVIDIA BSDF 辅助源码仍保留，但主积分器现在通过独立表面闭包进行求值和采样。资产包写入版本为 2，C++/Python 读取器同时接受版本 1 并补齐新参数默认值。
+
+性能采集保持可选。`enableGpuTiming` 使用正常 Shader 与同队列 timestamp queries，记录初始化、路径追踪和 DLSS 的 GPU 区间；`enableRayStatistics` 选择单独编译的统计 Shader，在 Binding 12 诊断头之后追加分片计数器，正常模式仍使用 80 字节诊断缓冲。`profile()` 返回最近成功渲染调用的数据，遵循现有同步和单线程所有权。路径追踪内部的硬件遍历和材质执行没有拆成独立 dispatch，因此时间戳不能独立归因这两者；详见 [性能采集说明](performance_profiling.md)。
 
 `tools/caustra_assets` 在库外把 USD/MaterialX 转成可移植 `.caustra` 包；可选 `caustra_assets` 仅用标准 C++ 读包并调用 CPU 校验，输出 `Scene` 与相机。渲染库不链接 USD/MaterialX SDK、Python、图片解码器或文件解析器。添加逐帧更新时再引入局部 buffer 更新、BLAS/TLAS update 和显式同步接口。当前 `setScene` 完整重建，`setCamera` / `setSettings` / `reset` 清除采样计数，下一次 dispatch 直接覆盖累积缓冲。
 
@@ -25,6 +29,10 @@
 Blender USD 的 `mtlx` 材质上下文是主要资产路径。外围编译器通过官方 OpenUSD API 解析组合层、实例、材质子集、primvars、变换与相机，重建原生 MaterialX Document 并校验连接/类型，按标准库 NodeDef 解析默认值。六类表面（Standard Surface、OpenPBR、Disney Principled、glTF PBR、USD Preview Surface、Simple Hair）有独立模型标记；未知节点和未支持的有效表面功能明确失败，不回退到 Preview Surface 或固定 PBR 常量。具体支持范围见 `tools/caustra_assets/README.md`。
 
 外围编译器把受支持的参数图转成最多 128 条 float4 GPU 指令，命中位置执行算术、空间输入、图像、法线贴图和程序噪声。六类表面的反射与 EDF 使用官方 MaterialX 1.39.5 Slang ShaderGen 生成的参数化函数，产物位于 `shaders/generated`；生成器在资产工具层，核心不依赖 MaterialX SDK。该阶段保持原有参数图 IR 和资产包布局，不支持任意 MaterialX closure 或任意参数节点。再生成、验证和适配边界见 [材质后端说明](materialx_backend.md)。
+
+上传场景时，`src/material_coverage.hpp` 从验证后的原始 IR 派生覆盖率 SSA 子图。根节点为最后一次 `Opacity` 写入，以及 glTF/USD 原生模式使用的 alpha 模式和阈值写入；后向保留全部传递依赖，再按原顺序紧凑编号，保留跨 `Output` 引用及纹理坐标 footprint。这些程序只存在于内部 GPU 缓冲，原材质图、公开 IR、Material 布局和资产包格式保持原样。
+
+覆盖率子图与完整材质共用同一套算术、纹理过滤和 footprint 实现；覆盖率按子图规模选择 8/16/32 个临时寄存器，超过 32 条或无法安全紧凑化时使用完整的 128 寄存器求值。完整着色图不超过 32 条时也使用 32 寄存器容量，其余保持 128，通过按规模选择容量减少寄存器及 footprint 数组的临时存储。主路径先求覆盖率，被拒绝的交点无需执行完整着色图；接受后求完整材质。普通阴影遮挡只求覆盖率，初始化介质表证明无内部介质且没有异构标志时才采用该路径；真实介质及异构介质继续执行完整材质和原有传输处理。覆盖率阈值、随机数消耗与过滤规则保持一致。`RendererOptions::optimizeMaterialCoverage` 默认开启，设为 `false` 时使用完整材质参考路径，供图像及性能对照；官方 ShaderGen 表面数学不受此开关影响。
 
 Blender 常见的三指令默认切线图有独立快速路径：精确匹配读取切线、三分量归一化和写回切线的指令及引用，按原顺序执行两次归一化后返回，跳过通用寄存器与 footprint 数组。现有资产包无需重编译；其他图继续执行完整解释器。回归将其与加入无用常量的通用路径逐像素比较，并覆盖各向异性及相似指令变体。
 

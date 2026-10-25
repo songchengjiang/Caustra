@@ -1,0 +1,108 @@
+{
+  "date": "2026-10-25",
+  "asset": "Blender Studio Einar v1",
+  "source_page": "https://studio.blender.org/characters/einar/v1/",
+  "download": "https://studio.blender.org/download-source/files/41/419e83fb75f30b989adf7920dec7a21c/419e83fb75f30b989adf7920dec7a21c.zip",
+  "license": "https://creativecommons.org/licenses/by/4.0/",
+  "credit": "Einar Rig (CC-BY) Blender Foundation | studio.blender.org",
+  "archive_bytes": 579834421,
+  "archive_sha256": "3cbb5a1dd9ffd3ca39edab420a83ea7f7db337b435a78ef27a0c87ff3e6977f7",
+  "blender": "4.5.3 LTS",
+  "autoexec": false,
+  "full_material_export_exit_codes": [
+    11,
+    11
+  ],
+  "geometry_control_export_exit_code": 0,
+  "caustra_render_test_run": false,
+  "deliverable_package": null,
+  "source_reachability": {
+    "method": "Structural upstream traversal from active Cycles/All outputs; constant-zero branches are not pruned.",
+    "render_collection_objects": 300,
+    "used_materials": 88,
+    "reachable_images": 44,
+    "missing_reachable_images": 0,
+    "udim_materials": 20,
+    "udim_image_sets": 2,
+    "udim_tiles": 7,
+    "multiple_named_uv_materials": 31,
+    "custom_attribute_materials": 36
+  },
+  "geometry_control": {
+    "types": {
+      "Xform": 322,
+      "BasisCurves": 66,
+      "Scope": 1,
+      "Material": 21,
+      "Shader": 21,
+      "Mesh": 221,
+      "RectLight": 4,
+      "DiskLight": 2,
+      "Camera": 2
+    },
+    "visible_types": {
+      "Xform": 322,
+      "BasisCurves": 66,
+      "Scope": 1,
+      "Material": 21,
+      "Shader": 21,
+      "Mesh": 221,
+      "RectLight": 4,
+      "DiskLight": 2,
+      "Camera": 2
+    },
+    "visible_mesh_vertices": 1115767,
+    "visible_mesh_polygons": 2214809,
+    "visible_mesh_triangles": 2214809,
+    "visible_curve_count": 162389,
+    "visible_curve_points": 1722251,
+    "geometry_control_only": true,
+    "material_preservation": false
+  },
+  "evidence_files": {
+    "inspect_blend.py": {
+      "path": "build/experiments/einar/inspect_blend.py",
+      "sha256": "fb4baad7a5c8e53a13f19ebd3578d5065cc0e47268b05b622a7af81ec47753c7"
+    },
+    "audit_active_materials.py": {
+      "path": "build/experiments/einar/audit_active_materials.py",
+      "sha256": "dc0ee80aa5e819f179166cc515ad371588d582a0fb75f203103f9bb8dc8849a1"
+    },
+    "source_inventory.json": {
+      "path": "build/experiments/einar/source_inventory.json",
+      "sha256": "77e08426e81d47b0329b16b7198e67e10e8607f445cb97c9e6c75d3ff87700b4"
+    },
+    "active_material_inventory.json": {
+      "path": "build/experiments/einar/active_material_inventory.json",
+      "sha256": "7222b64869e330bf6df834abc050437763355db6310ff87143679f48da0c1922"
+    },
+    "export_original.py": {
+      "path": "build/experiments/einar/export_original.py",
+      "sha256": "ae8c47b61f4a218d25855764e0fd1c4e6cf5a68d6bd19d5035f5044462ddda3a"
+    },
+    "export.log": {
+      "path": "build/experiments/einar/export.log",
+      "sha256": "e1b53c3f8eba44c74c3d249638737bf771d3a7b90d6453c84195ce2bf1be2f2a"
+    },
+    "export_unsandboxed.log": {
+      "path": "build/experiments/einar/export_unsandboxed.log",
+      "sha256": "09c489044fbc1da65e47e4af39296cfc88d4c122ec20ba23f43ac58e85785150"
+    },
+    "einar_release_v1.crash.txt": {
+      "path": "build/experiments/einar/einar_release_v1.crash.txt",
+      "sha256": "51937541be3b91bd60ae60270982c9ca216bcca032d9ef5613a101460b08bf5e"
+    },
+    "export_geometry_control.py": {
+      "path": "build/experiments/einar/export_geometry_control.py",
+      "sha256": "af6ae4bef9194ef1519bf4e64b51092794991e73d3a0b35f99fa1870128f0a42"
+    },
+    "geometry_control.log": {
+      "path": "build/experiments/einar/geometry_control.log",
+      "sha256": "f2ca201ab4b7e1ac0b01f0019b3f6a4f3d3f609696de0b81449edaa2e0512e0b"
+    },
+    "usd_geometry_inventory.json": {
+      "path": "build/experiments/einar/usd_geometry_inventory.json",
+      "sha256": "0932dfbfa6ce8bf435f9a76e9acc25b9c3d1a3e4544e205ed917164cfc0e7d9d"
+    }
+  }
+}

@@ -47,6 +47,11 @@ float materialOpacity(GpuMaterial m)
 [[vk::binding(9, 0)]] StructuredBuffer<MaterialInstruction> materialInstructions;
 [[vk::binding(10, 0)]] StructuredBuffer<GpuTextureInfo> textureInfos;
 [[vk::binding(11, 0)]] StructuredBuffer<float4> texturePixels;
+// Private, derived at upload time from the same validated public IR. Binding
+// 15 is uint4(first,count,flags,reserved) per material; bit 0 requests the full
+// evaluator. Binding 16 contains the dependency-preserving coverage subgraphs.
+[[vk::binding(15, 0)]] StructuredBuffer<uint4> coveragePrograms;
+[[vk::binding(16, 0)]] StructuredBuffer<MaterialInstruction> coverageInstructions;
 
 static const uint MATERIAL_REGISTER_COUNT = 128;
 
@@ -223,7 +228,7 @@ void materialWriteOutput(inout MaterialEvaluation evaluation, uint parameter, fl
   }
 }
 
-MaterialEvaluation evaluateMaterialProgram(uint materialIndex, MaterialContext ctx)
+MaterialEvaluation evaluateMaterialInstructions<let RegisterCount : int, let Coverage : bool>(uint materialIndex, MaterialContext ctx)
 {
   MaterialEvaluation evaluation;
   evaluation.material = materials[materialIndex];
@@ -231,14 +236,15 @@ MaterialEvaluation evaluateMaterialProgram(uint materialIndex, MaterialContext c
   evaluation.coatNormal = evaluation.normal;
   evaluation.tangent = ctx.tangent;
   evaluation.coatTangent = ctx.tangent;
-  uint count = min(evaluation.material.program.y, MATERIAL_REGISTER_COUNT);
+  uint4 range = Coverage ? coveragePrograms[materialIndex] : evaluation.material.program;
+  uint count = min(range.y, uint(RegisterCount));
   if(count == 0) return evaluation;
-  if(count == 3)
+  if(!Coverage && count == 3)
   {
     // Blender's default geometry tangent often survives as this exact program.
     // Recognize existing packages too, before allocating/clearing the generic
     // register and footprint arrays. Every other graph keeps the interpreter.
-    uint first = evaluation.material.program.x;
+    uint first = range.x;
     MaterialInstruction source = materialInstructions[first];
     MaterialInstruction normalized = materialInstructions[first + 1];
     MaterialInstruction output = materialInstructions[first + 2];
@@ -257,15 +263,17 @@ MaterialEvaluation evaluateMaterialProgram(uint materialIndex, MaterialContext c
       return evaluation;
     }
   }
-  float4 registers[MATERIAL_REGISTER_COUNT] = {};
+  float4 registers[RegisterCount] = {};
   // Conservative per-lane filter widths propagate UV scaling and combinations.
   // These are ray-footprint bounds, not screen-space quad derivatives. Spatial
   // position inputs currently have no footprint in MaterialContext.
-  float4 widths[MATERIAL_REGISTER_COUNT] = {};
+  float4 widths[RegisterCount] = {};
   bool explicitCoatTangent=false;
   for(uint index = 0; index < count; ++index)
   {
-    MaterialInstruction instruction = materialInstructions[evaluation.material.program.x + index];
+    MaterialInstruction instruction;
+    if(Coverage) instruction = coverageInstructions[range.x + index];
+    else instruction = materialInstructions[range.x + index];
     uint4 code = instruction.code;
     float4 a = float4(0), b = float4(0), c = float4(0);
     float4 da = float4(0), db = float4(0), dc = float4(0);
@@ -372,6 +380,31 @@ MaterialEvaluation evaluateMaterialProgram(uint materialIndex, MaterialContext c
   // the renderer-neutral IR's explicit independent coat-tangent extension.
   if(evaluation.material.program.z==0 && !explicitCoatTangent) evaluation.coatTangent=evaluation.tangent;
   return evaluation;
+}
+
+// The operation implementation is shared by every specialization, including
+// the reference path. Only the temporary capacity and instruction buffer vary.
+MaterialEvaluation evaluateMaterialProgram(uint materialIndex, MaterialContext ctx)
+{
+  return evaluateMaterialInstructions<128, false>(materialIndex, ctx);
+}
+MaterialEvaluation evaluateMaterialProgramCompact(uint materialIndex, MaterialContext ctx)
+{
+  if(materials[materialIndex].program.y <= 32)
+    return evaluateMaterialInstructions<32, false>(materialIndex, ctx);
+  return evaluateMaterialProgram(materialIndex, ctx);
+}
+float evaluateMaterialCoverage(uint materialIndex, MaterialContext ctx)
+{
+  uint4 range = coveragePrograms[materialIndex];
+  if((range.z & 1u) != 0)
+    return materialOpacity(evaluateMaterialProgram(materialIndex, ctx).material);
+  if(range.y == 0) return materialOpacity(materials[materialIndex]);
+  if(range.y <= 8)
+    return materialOpacity(evaluateMaterialInstructions<8, true>(materialIndex, ctx).material);
+  if(range.y <= 16)
+    return materialOpacity(evaluateMaterialInstructions<16, true>(materialIndex, ctx).material);
+  return materialOpacity(evaluateMaterialInstructions<32, true>(materialIndex, ctx).material);
 }
 
 #endif

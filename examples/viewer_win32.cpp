@@ -12,9 +12,11 @@
 #include "orbit_camera.hpp"
 #include "viewer_scene.hpp"
 #include "vulkan_presenter.hpp"
+#include "../src/shutdown_trace.hpp"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <charconv>
 #include <chrono>
 #include <cmath>
@@ -28,6 +30,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 
 namespace {
@@ -39,6 +42,7 @@ struct Options {
   int quality=-1; // auto: try DLSS quality, visibly fall back to raw path tracing
   bool validation=false, smoke=false, autoOrbit=false, help=false, strictMedia=false;
   float mediumTolerance=0.001f;
+  std::string shutdownTest;
   std::filesystem::path screenshot;
   std::filesystem::path asset;
 };
@@ -63,7 +67,7 @@ Options arguments(int argc,char** argv) {
     if(a=="--strict-media") {o.strictMedia=true; continue;}
     if(a=="--smoke-test") {o.smoke=true; continue;}
     if(a=="--auto-orbit") {o.autoOrbit=true; continue;}
-    if(a!="--width" && a!="--height" && a!="--frames" && a!="--fps-limit" && a!="--bounces" && a!="--dlss" && a!="--screenshot" && a!="--asset" && a!="--medium-tolerance") throw std::invalid_argument("Unknown option: "+std::string(a));
+    if(a!="--width" && a!="--height" && a!="--frames" && a!="--fps-limit" && a!="--bounces" && a!="--dlss" && a!="--screenshot" && a!="--asset" && a!="--medium-tolerance" && a!="--shutdown-test") throw std::invalid_argument("Unknown option: "+std::string(a));
     if(++i==argc) throw std::invalid_argument("Missing option value");
     std::string_view v=argv[i];
     if(a=="--dlss") {
@@ -76,6 +80,7 @@ Options arguments(int argc,char** argv) {
       else throw std::invalid_argument("DLSS mode: auto/off/native/quality/balanced/performance");
     } else if(a=="--screenshot") o.screenshot=argv[i];
     else if(a=="--asset") o.asset=argv[i];
+    else if(a=="--shutdown-test") o.shutdownTest=v;
     else if(a=="--medium-tolerance") o.mediumTolerance=mediumTolerance(v);
     else if(a=="--width") o.width=number(v);
     else if(a=="--height") o.height=number(v);
@@ -86,7 +91,15 @@ Options arguments(int argc,char** argv) {
   if(o.width<320 || o.width>3840 || o.height<240 || o.height>2160 || o.fpsLimit>240) throw std::invalid_argument("Width 320..3840, height 240..2160, FPS limit 1..240");
   if(o.maxBounces>64) throw std::invalid_argument("Path depth must be in 1..64");
   if(o.smoke && !o.frames) o.frames=24;
-  if(o.smoke && o.frames<20) throw std::invalid_argument("Smoke test needs at least 20 frames");
+  if(o.smoke && o.frames<(o.shutdownTest=="close"?16u:20u))
+    throw std::invalid_argument("Smoke test needs at least 20 frames (16 for interaction shutdown)");
+  if(!o.shutdownTest.empty()) {
+    if(o.shutdownTest!="frames" && o.shutdownTest!="close" && o.shutdownTest!="escape" && o.shutdownTest!="minimized" && o.shutdownTest!="resize")
+      throw std::invalid_argument("Shutdown test mode: frames/close/escape/minimized/resize");
+    if(o.smoke && o.shutdownTest!="close") throw std::invalid_argument("Only --shutdown-test close supports --smoke-test");
+    if(o.shutdownTest=="frames") {if(!o.frames) o.frames=3;}
+    else if(o.frames && !o.smoke) throw std::invalid_argument("Only frames or close smoke shutdown tests accept --frames");
+  }
   return o;
 }
 void help() {
@@ -102,6 +115,7 @@ void help() {
     "--validation           Vulkan validation and nonzero exit on errors\n"
     "--auto-orbit           Rotate the inspection camera continuously\n"
     "--frames N             Close after N presented frames\n"
+    "--shutdown-test MODE   Test frames/close/escape/minimized/resize shutdown (close also supports smoke)\n"
     "--screenshot FILE.bmp  Save final window client including controls\n"
     "--asset FILE.caustra   Inspect a compiled Blender USD/MaterialX asset\n"
     "--smoke-test           Exercise window input; with DLSS, also test combo/key off-on cycles\n";
@@ -153,9 +167,11 @@ class Viewer {
 public:
   explicit Viewer(Options options):options_(std::move(options)),autoOrbit_(options_.autoOrbit) {}
   ~Viewer() {
+    caustra::detail::ShutdownTrace shutdown("viewer.cleanup");
+    requestClose();
     renderer_=nullptr;
-    presenter_.reset();
-    if(window_ && IsWindow(window_)) DestroyWindow(window_);
+    releasePresenter();
+    { caustra::detail::ShutdownTrace stage("viewer.destroyWindow"); if(window_ && IsWindow(window_)) DestroyWindow(window_); }
     for(auto font:{font_,titleFont_}) if(font) DeleteObject(font);
   }
   int run() {
@@ -211,7 +227,7 @@ public:
     auto nextFrame=Clock::now();
     MSG message{};
     while(running_) {
-      while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)) {
+      while(running_ && PeekMessageW(&message,nullptr,0,0,PM_REMOVE)) {
         if(message.message==WM_QUIT) {running_=false; break;}
         if(message.message==WM_KEYDOWN && message.hwnd!=quality_ && message.hwnd!=samples_) {
           const bool repeat=(message.lParam&(1LL<<30))!=0;
@@ -258,11 +274,40 @@ public:
         frameTimes_.push_back({ms(renderStart,rendered),ms(rendered,presented),ms(renderStart,finished)});
       }
       if(options_.smoke) smokeStep();
+      if(frames_==(options_.smoke?options_.frames:3u) && !options_.shutdownTest.empty() && options_.shutdownTest!="frames") {
+        if(options_.shutdownTest=="resize") verifyPausedResizeShutdown();
+        if(options_.shutdownTest=="minimized") {
+          togglePause();
+          ShowWindow(window_,SW_MINIMIZE);
+          // Commit the actual window state before posting the close request.
+          MSG pending{};
+          while(PeekMessageW(&pending,nullptr,0,0,PM_REMOVE)) {
+            require(pending.message!=WM_QUIT,"Window closed before minimized shutdown test");
+            TranslateMessage(&pending);DispatchMessageW(&pending);
+          }
+          require(paused_ && minimized_,"Shutdown test did not reach paused/minimized state");
+        }
+        closeRequestedAt_=Clock::now();
+        if(options_.shutdownTest=="escape")
+          require(PostMessageW(window_,WM_KEYDOWN,VK_ESCAPE,1)!=0,"Could not post shutdown Escape key");
+        else if(options_.shutdownTest=="close" || options_.shutdownTest=="resize")
+          require(PostMessageW(window_,WM_SYSCOMMAND,SC_CLOSE,0)!=0,"Could not post system caption close");
+        else
+          require(PostMessageW(window_,WM_CLOSE,0,0)!=0,"Could not post minimized close");
+        std::cout<<"Shutdown test requested: "<<options_.shutdownTest<<'\n';
+      }
       if(options_.frames && frames_>=options_.frames) {
         if(options_.smoke) verifySmoke();
         if(!options_.screenshot.empty()) capture(options_.screenshot);
-        running_=false;
+        if(!(options_.smoke && options_.shutdownTest=="close")) requestClose();
       }
+    }
+    requestClose();
+    if(!options_.shutdownTest.empty()) {
+      if(options_.shutdownTest!="frames") require(closeRequestedAt_!=Clock::time_point{},"Shutdown test closed before posting its test request");
+      require(!IsWindowEnabled(window_),"Closing window still accepted input");
+      require(closeWindowMs_<=1000.0,"Window did not acknowledge close within 1000 ms");
+      std::cout<<"Viewer close accepted: "<<closeWindowMs_<<" ms; input disabled\n";
     }
     require(renderer_->validationErrorCount()==0,"Vulkan validation errors occurred");
     std::cout<<"Presented "<<frames_<<" frames; "<<settings_.width<<'x'<<settings_.height<<"; Vulkan errors: "<<renderer_->validationErrorCount()<<'\n';
@@ -279,6 +324,7 @@ public:
       std::cout<<std::fixed<<std::setprecision(3)<<"Median frame work (ms): render="<<median[0]<<", present="<<median[1]<<", total="<<median[2]
         <<"; run FPS="<<frames_/elapsed<<" (includes FPS cap and idle time)\n";
     }
+    std::cout<<"Viewer cleanup starting\n";
     return 0;
   }
 private:
@@ -286,6 +332,9 @@ private:
   HWND window_{},viewportWindow_{},quality_{},samples_{},pauseButton_{},autoButton_{};
   HFONT font_{},titleFont_{};
   bool running_=true,minimized_=false,paused_=false,autoOrbit_=false,cameraDirty_=false,resizePending_=false,rendererSized_=false;
+  bool shuttingDown_=false;
+  Clock::time_point closeRequestedAt_{};
+  double closeWindowMs_=0;
   bool needsPresent_=false,cameraCutPending_=false;
   int activeQuality_=0,pendingQuality_=-1,dragButton_=0;
   POINT lastMouse_{};
@@ -310,6 +359,51 @@ private:
   uint32_t idleSamples_=0;
   int smokeDlssQuality_=0;
   unsigned smokeActions_=0,smokeDlssTransitions_=0;
+
+  void requestClose() noexcept {
+    if(shuttingDown_) return;
+    const auto start=closeRequestedAt_==Clock::time_point{}?Clock::now():closeRequestedAt_;
+    shuttingDown_=true;running_=false;dragButton_=0;
+    if(GetCapture()==window_) ReleaseCapture();
+    // Keep the window alive and visible until cleanup really finishes. Hiding
+    // it here would conceal a stuck process while the terminal is still waiting.
+    if(window_ && IsWindow(window_)) {EnableWindow(window_,FALSE);SetWindowTextW(window_,L"Caustra | Closing...");}
+    closeWindowMs_=std::chrono::duration<double,std::milli>(Clock::now()-start).count();
+  }
+
+  void releasePresenter() noexcept {
+    if(!presenter_) return;
+    // Win32 WSI/driver destruction can send synchronous messages to the HWND's
+    // owner. Transfer exclusive Vulkan ownership after rendering stops, while
+    // this thread keeps the live window and its message dispatcher available.
+    auto retiring=std::move(presenter_);
+    std::atomic<bool> finished{false};
+    std::thread cleanup;
+    try {
+      cleanup=std::thread([&] {
+        { caustra::detail::ShutdownTrace stage("viewer.destroyPresenter"); retiring.reset(); }
+        finished.store(true,std::memory_order_release);
+      });
+    } catch(...) {
+      // Keep ownership local until thread creation succeeds. Under OS thread
+      // exhaustion, retain the original synchronous, resource-safe fallback.
+      std::cerr<<"Viewer: could not start GPU cleanup thread; releasing synchronously\n";
+      retiring.reset();
+      return;
+    }
+    while(!finished.load(std::memory_order_acquire)) {
+      MSG message{};
+      while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)) {
+        // Quit requests must not abandon a worker that still owns the device
+        // and surface. No new render/input actions are allowed during teardown.
+        if(message.message==WM_QUIT) continue;
+        TranslateMessage(&message);DispatchMessageW(&message);
+      }
+      if(!finished.load(std::memory_order_acquire))
+        MsgWaitForMultipleObjectsEx(0,nullptr,20,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
+    }
+    cleanup.join();
+  }
 
   void updateMediumDiagnostics(Clock::time_point now) {
     mediumDiagnostics_=renderer_->diagnostics();
@@ -350,6 +444,7 @@ private:
       return 0;
     }
     if(self) {
+      if(self->shuttingDown_) return DefWindowProcW(hwnd,message,wp,lp);
       switch(message) {
         case WM_SIZE: self->needsPresent_=true;return 0;
         case WM_LBUTTONDOWN:case WM_RBUTTONDOWN:case WM_MBUTTONDOWN:
@@ -364,8 +459,26 @@ private:
     return DefWindowProcW(hwnd,message,wp,lp);
   }
   LRESULT message(UINT msg,WPARAM wp,LPARAM lp) {
+    if(shuttingDown_) {
+      switch(msg) {
+        case WM_CLOSE: return 0;
+        case WM_DESTROY: PostQuitMessage(0); return 0;
+        case WM_PAINT: {
+          PAINTSTRUCT paint{};BeginPaint(window_,&paint);EndPaint(window_,&paint);return 0;
+        }
+        case WM_ERASEBKGND: return 1;
+        case WM_SIZE: return 0;
+        case WM_COMMAND: case WM_KEYDOWN: case WM_SYSKEYDOWN: case WM_CHAR:
+        case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_MBUTTONDOWN:
+        case WM_LBUTTONUP: case WM_RBUTTONUP: case WM_MBUTTONUP:
+        case WM_MOUSEMOVE: case WM_MOUSEWHEEL: return 0;
+      }
+      // In particular, preserve default processing of driver/WSI and native
+      // window messages; swallowing every message would recreate the deadlock.
+      return DefWindowProcW(window_,msg,wp,lp);
+    }
     switch(msg) {
-      case WM_CLOSE: running_=false; return 0;
+      case WM_CLOSE: requestClose(); return 0;
       case WM_DESTROY: running_=false; PostQuitMessage(0); return 0;
       case WM_ERASEBKGND: return 1;
       case WM_GETMINMAXINFO: {
@@ -632,6 +745,59 @@ private:
     if(frames_==12) {SendMessageW(window_,WM_COMMAND,idReset,0);++smokeActions_;}
     if(frames_==14) drag(WM_LBUTTONDOWN,WM_LBUTTONUP,MK_LBUTTON,-40,15);
   }
+  void verifyPausedResizeShutdown() {
+    require(!paused_,"Resize shutdown test must start from a running viewer");
+    const auto samples=renderer_->sampleCount();
+    const auto history=renderer_->frameCount();
+    const auto originalSettings=settings_;
+    RECT original{};require(GetWindowRect(window_,&original)!=0,"Could not query resize test window");
+    const int originalWidth=original.right-original.left,originalHeight=original.bottom-original.top;
+    togglePause();
+    auto unchanged=[&] {
+      require(paused_ && renderer_->sampleCount()==samples && renderer_->frameCount()==history,
+        "Paused resize shutdown traced samples or changed temporal history");
+      require(settings_.width==originalSettings.width && settings_.height==originalSettings.height,
+        "Paused resize shutdown changed the retained HDR output size");
+    };
+    auto pump=[&] {
+      MSG message{};
+      while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)) {
+        require(message.message!=WM_QUIT,"Window closed before resize shutdown test");
+        TranslateMessage(&message);DispatchMessageW(&message);
+      }
+      require(running_ && !shuttingDown_ && !minimized_ && !IsIconic(window_),
+        "Resize shutdown window closed or minimized before its close request");
+      unchanged();
+    };
+    auto resizeAndDisplay=[&](int width,int height) {
+      require(SetWindowPos(window_,nullptr,0,0,width,height,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE)!=0,
+        "Could not resize paused shutdown window");
+      const auto deadline=Clock::now()+std::chrono::seconds(2);
+      bool shown=false;
+      do {
+        pump();
+        const bool presented=republishCached();
+        const auto area=viewport();
+        shown=presented && presenter_->width()==uint32_t(area.right) && presenter_->height()==uint32_t(area.bottom-area.top);
+        unchanged();
+        if(!shown) MsgWaitForMultipleObjectsEx(0,nullptr,10,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
+      } while(!shown && Clock::now()<deadline);
+      require(shown,"Paused resized GPU output was not presented before shutdown");
+      const auto pixels=presenter_->readbackLdr();
+      const auto area=viewport();
+      require(pixels.size()==size_t(area.right)*size_t(area.bottom-area.top) &&
+        std::any_of(pixels.begin(),pixels.end(),[](uint32_t pixel){return pixel!=0;}),
+        "Paused resize shutdown capture was empty or had incorrect dimensions");
+      unchanged();
+      return std::pair{presenter_->width(),presenter_->height()};
+    };
+    // Exercise retained HDR scaling and swapchain replacement without another
+    // render call, then close while still paused. No minimize/restore is needed.
+    const auto larger=resizeAndDisplay(originalWidth+96,originalHeight+64);
+    const auto smaller=resizeAndDisplay(originalWidth+32,originalHeight+24);
+    require(larger!=smaller,"Resize shutdown did not exercise two GPU display sizes");
+    std::cout<<"Paused resize shutdown passed: two GPU display sizes; retained samples="<<samples<<", history="<<history<<'\n';
+  }
   void verifyPausedResizeRestore() {
     require(!paused_,"Paused presentation smoke must start from a running viewer");
     const auto samples=renderer_->sampleCount();
@@ -759,10 +925,22 @@ private:
 int main(int argc,char** argv) {
   std::cout<<std::unitbuf;
   bool smoke=false;
+  // Test argument errors must also stay noninteractive, before parsing succeeds.
+  for(int index=1;index<argc;++index)
+    if(std::string_view(argv[index])=="--smoke-test" || std::string_view(argv[index])=="--shutdown-test") smoke=true;
   try {
-    auto options=arguments(argc,argv);smoke=options.smoke;
+    auto options=arguments(argc,argv);smoke=smoke || options.smoke || !options.shutdownTest.empty();
     if(options.help) {help();return 0;}
-    Viewer viewer(std::move(options));return viewer.run();
+    int result=1;
+    Clock::time_point shutdownStart{};
+    {
+      Viewer viewer(std::move(options));
+      result=viewer.run();
+      shutdownStart=Clock::now();
+    }
+    const auto shutdownMs=std::chrono::duration<double,std::milli>(Clock::now()-shutdownStart).count();
+    std::cout<<std::fixed<<std::setprecision(3)<<"Viewer shutdown complete: "<<shutdownMs<<" ms\n";
+    return result;
   } catch(const std::exception& e) {
     std::cerr<<"Caustra viewer: "<<e.what()<<'\n';
     if(!smoke) MessageBoxW(nullptr,wide(e.what()).c_str(),L"Caustra viewer",MB_OK|MB_ICONERROR);
